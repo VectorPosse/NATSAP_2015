@@ -5,18 +5,27 @@ date: "July 8, 2015"
 output: html_document
 ---
 
-To get Stan working, we reproduce the results from the 2014 report, but converting everything from `lme4` to Stan.
+To get Stan working, we reproduce the results from the 2014 report, except we convert everything from `lme4` to Stan.
 
 ## Housekeeping
 
 Load necessary libraries and special functions.
 
-```{r}
+```{r, message = FALSE}
 library(rstan)
+library(parallel)
 library(beepr)
 library(dplyr)
 library(ggplot2)
+library(knitr)
+library(readr)
+```
 
+```{r}
+opts_chunk$set(cache = TRUE)
+```
+
+```{r}
 ## runs Stan in parallel (if not optimizing) with caching of compiled Stan programs
 stan <- function(stanProgram,      # path to .stan file or program string
                  optimize = FALSE, # use sampling() (default) or optimizing()
@@ -24,7 +33,6 @@ stan <- function(stanProgram,      # path to .stan file or program string
                  pedantic = FALSE, # whether to print status messages
                  sound = 1,        # sound when sampling complete (if beepr is installed)
                  ...) {            # further arguments to sampling() or optimizing()
-  dots <-   dots
   dots <- list(...)
   if (missing(stanProgram)) {
     if (!is.null(dots$fit)) {
@@ -108,45 +116,228 @@ stan <- function(stanProgram,      # path to .stan file or program string
   return(out)
 }
 
+cleanup <- function(model) {
+    model_string <- deparse(substitute(model))
+    file1 <- paste("data", model_string, sep = "_")
+    file2 <- paste("stan", model_string, sep = "_")
+    file3 <- paste("fit", model_string, sep = "_")
+    file4 <- paste("samples", model_string, sep = "_")
+    cleanup_list <- c(file1, file2, file3, file4)
+    rm(list = cleanup_list, pos = ".GlobalEnv")
+}
 ```
 
 ## Read and process data
 
-```{r}
-natsap <- read.csv("AllClients_rev3.csv")
-dose <- read.csv("DoseData_07-08-2015.csv")
+Load data.
 
-natsap_tidy <- natsap %>%
+```{r}
+natsap <- read_csv("AllClients_rev3.csv")
+dose <- read_csv("DoseData_07-08-2015.csv")
+```
+
+Clean data.
+
+```{r}
+
+## Subset data
+
+natsap_sub <- natsap %>%
     select(sex = gender,
            ID = programId,
            company = company,
            OQ_A = Z1_A0_Self_SCORE,
            OQ_D = Z1_D0_Self_SCORE)
 
-dose_tidy <- dose %>%
+dose_sub <- dose %>%
     select(company = company,
            ID = NATSAP_ID,
-           RTCWT = RTC.or.WT,
-           IT = Mode.minutes.of.Inidividual.Therapy.per.week,
-           IT_freq = Frequency.of.IT.per.week,
-           GT = Mode.minutes.of.Group.Therapy.per.week,
-           GT_freq = Frequency.of.GT.week,
-           RFT = Mode.minutes..of.Remote.Family.Therapy.per.week,
-           RFT_freq = Frequency.of.RFT.per.week)
+           RTCWT = `RTC or WT`,
+           IT = `Mode minutes of Inidividual Therapy per week`,
+           # IT_freq = `Frequency of IT per week`,
+           GT = `Mode minutes of Group Therapy per week`,
+           # GT_freq = `Frequency of GT week`,
+           RFT = `Mode minutes  of Remote Family Therapy per week`)
+           # RFT_freq = `Frequency of RFT per week`)
+
 
 ## Check to make sure program IDs are coded correctly.
 
-ID_check_natsap <- natsap_tidy %>%
+ID_check_natsap <- natsap_sub %>%
     distinct(ID) %>%
     select(company, ID)
-ID_check_dose <- dose_tidy %>%
+ID_check_dose <- dose_sub %>%
     distinct(ID) %>%
     select(company, ID)
 
 ID_check <- inner_join(ID_check_dose, ID_check_natsap, by = "ID")
+as.data.frame(ID_check)
+
 
 ## Get complete cases
 
+natsap_sub <- natsap_sub %>%
+    na.omit() %>%
+    filter(sex != "")
+dose_sub <- dose_sub %>%
+    na.omit()
 
+
+## Join IDs so our tidy data sets will contain only
+## programs for which we have dose data and matched pairs.
+
+natsap_tidy <- semi_join(natsap_sub, dose_sub, by = "ID")
+dose_tidy <- semi_join(dose_sub, natsap_sub, by = "ID")
+
+
+## Give programs new random ID, consecutively numbered
+
+J <- NROW(dose_tidy)
+set.seed(1234)
+new_ID <- sample(1:J, J)
+
+dose_tidy <- dose_tidy %>%
+    cbind(new_ID) %>%
+    arrange(new_ID)
+
+lookup <- dose_tidy %>%
+    select(ID, new_ID)
+
+natsap_tidy <- natsap_tidy %>%
+    inner_join(lookup, by = "ID") %>%
+    arrange(new_ID)
+
+
+## Make diff variable
+
+natsap_tidy <- natsap_tidy %>%
+    mutate(diff = OQ_A - OQ_D) # Positive scores represent improvement
+
+
+## Get sample sizes for each program
+
+sample_size <- natsap_tidy %>%
+    group_by(new_ID) %>%
+    summarise(n = n())
+
+dose_tidy <- dose_tidy %>%
+    inner_join(sample_size, by = "new_ID")
+    
+## Clean up environment
+
+rm(natsap, dose, natsap_sub, dose_sub, ID_check, ID_check_dose, ID_check_natsap, J, new_ID, lookup, sample_size)
+```
+
+
+## Simple models
+
+First, consider `diff` alone.
+
+```{r}
+
+data_diff <- list(y = natsap_tidy$diff,
+                  n = length(natsap_tidy$diff))
+
+stan_diff <- "
+data {
+    int<lower = 0> n; # clients
+    real y[n];
+
+}
+parameters {
+    real mu;
+    real<lower = 0> sigma;
+}
+model {
+    y ~ normal(mu, sigma);
+}
+"
+
+fit_diff <- stan(data = data_diff,
+                 model_code = stan_diff)
+
+## Extract samples
+
+samples_diff <- as.data.frame(extract(fit_diff))
+
+## Chain diagnostics and posterior summary
+
+traceplot(fit_diff, inc_warmup = FALSE)
+
+print(fit_diff)
+
+ggplot(samples_diff, aes(x = mu)) + 
+    geom_histogram(color = "black", fill = "white")
+ggplot(samples_diff, aes(x = sigma)) + 
+    geom_histogram(color = "black", fill = "white")
+
+## Clean up workspace
+
+cleanup(diff)
+```
+
+Now consider `diff` by program
+
+```{r}
+data_diff_prog <- list(y = natsap_tidy$diff,
+                       n = length(natsap_tidy$diff),
+                       J = NROW(dose_tidy),
+                       prog = natsap_tidy$new_ID)
+
+stan_diff_prog <- "
+data {
+    int<lower = 0> n;   # clients
+    int<lower = 0> J;   # programs
+    real y[n];          # diff data
+    int prog[n];        # program for each client
+
+}
+parameters {
+    real mu[J];
+    real<lower = 0> sigma[J];
+}
+model {
+    for (i in 1:n) {
+        y[i] ~ normal(mu[prog[i]], sigma[prog[i]]);
+    }
+}
+"
+
+fit_diff_prog <- stan(data = data_diff_prog,
+                      model_code = stan_diff_prog)
+
+## Extract samples
+
+samples_diff_prog <- as.data.frame(extract(fit_diff_prog))
+
+## Chain diagnostics and posterior summary
+
+# Sample 4 random programs
+some_programs <- sort(sample(1:data_diff_prog$J, 4))
+cat("Sample sizes for programs", some_programs, ": ",
+    dose_tidy[dose_tidy$new_ID %in% some_programs,"n"])
+mus <- some_programs %>%
+    as.character() %>%
+    sapply(function(x) {paste("mu[", x, "]", sep = "")}) %>%
+    unname()
+sigmas <- some_programs %>%
+    as.character() %>%
+    sapply(function(x) {paste("sigma[", x, "]", sep = "")}) %>%
+    unname()
+pars <- c(mus, sigmas)
+
+traceplot(fit_diff_prog, pars = pars, inc_warmup = FALSE)
+
+print(fit_diff_prog)
+
+# ggplot(samples_diff_prog, aes(x = mu)) + 
+#     geom_histogram(color = "black", fill = "white")
+# ggplot(samples_diff_prog, aes(x = sigma)) + 
+#     geom_histogram(color = "black", fill = "white")
+
+## Clean up workspace
+
+cleanup(diff_prog)
+rm(some_programs, mus, sigmas, pars)
 
 ```
