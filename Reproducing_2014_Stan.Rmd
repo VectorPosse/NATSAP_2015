@@ -5,13 +5,15 @@ date: "July 8, 2015"
 output: html_document
 ---
 
-To get Stan working, we reproduce the results from the 2014 report, except we convert everything from `lme4` to Stan.
+To get Stan working, we reproduce the results from the 2014 report, except we convert everything from `lme4` to Stan. (This is Part 1: the file is split up to keep compilation managaeable.)
+
+This part contains the complete pooling and no pooling models.
 
 ## Housekeeping
 
 Load necessary libraries and special functions.
 
-```{r, message = FALSE}
+```{r, message = FALSE, cache = FALSE}
 library(rstan)
 library(parallel)
 library(beepr)
@@ -22,123 +24,147 @@ library(readr)
 ```
 
 ```{r}
-opts_chunk$set(cache = TRUE)
-```
+source("stan_utilities.R")
 
-```{r}
-## runs Stan in parallel (if not optimizing) with caching of compiled Stan programs
-stan <- function(stanProgram,      # path to .stan file or program string
-                 optimize = FALSE, # use sampling() (default) or optimizing()
-                 cores = parallel::detectCores(), # number of cores to use if sampling()
-                 pedantic = FALSE, # whether to print status messages
-                 sound = 1,        # sound when sampling complete (if beepr is installed)
-                 ...) {            # further arguments to sampling() or optimizing()
-  dots <- list(...)
-  if (missing(stanProgram)) {
-    if (!is.null(dots$fit)) {
-      stanProgram <- rstan::get_stancode(dots$fit)
-    }
-    else if (!is.null(dots$file)) {
-      stanProgram <- dots$file
-      dots$file <- NULL
-    }
-    else {
-      stanProgram <- dots$model_code
-      dots$model_code <- NULL
-    }
-  }
-  if (length(stanProgram) > 1 || !grepl("stan$", stanProgram)) { # program string
-    tf <- tempfile()
-    writeLines(stanProgram, con = tf)
-    stanProgram <- file.path(dirname(tf), paste0(tools::md5sum(tf), ".stan"))
-    if (!file.exists(stanProgram)) file.rename(from = tf, to = stanProgram)
-  }
-  else if (!file.exists(stanProgram)) stop(paste(stanProgram, "does not exist"))
+## The file stan_utilities.R contains the following functions:
 
-  mtime <- file.info(stanProgram)$mtime
-  chains <- dots$chains
-  if (is.null(chains)) chains <- 4L
-  stanProgram.rda <- gsub("stan$", "rda", stanProgram)
-  if (!file.exists(stanProgram.rda) |
-     file.info(stanProgram.rda)$mtime <  mtime | 
-     mtime < as.POSIXct(packageDescription("rstan")$Date) ) {
-         
-    if (pedantic) cat("Model needs compilation.\n")
-    dots$chains <- 0L
-    dots$file <- stanProgram
-    stanExe <- suppressMessages(do.call(rstan::stan, args = dots))
-    saveRDS(stanExe, file = stanProgram.rda)
-    dots$file <- NULL
-  } 
-  else {
-    if (pedantic) cat("Loading cached model.\n")
-    stanExe <- readRDS(stanProgram.rda)
-  }
-  
-  if (optimize) {
-    dots$object <- get_stanmodel(stanExe)
-    dots$chains <- NULL
-    out <- do.call(rstan::optimizing, args = dots)
-    return(out)
-  }
+########################################
 
-  # sampling()
-  dots$chains <- 1L
-  dots$fit <- stanExe
-  if (chains == 0) return(stanExe)
-  if (chains == 1) return(do.call(rstan::stan, args = dots))
+## stan
+## This is a replacement for the stan function in the rstan package that
+##      caches already compiled models and runs in parallel if possible.
+## Returns a stanfit object.
 
-  dots$refresh <- 500L
-  sinkfile <- paste0(tempfile(), "_StanProgress.txt")
-  cat("Refresh to see progress\n", file = sinkfile)
-#   if(interactive()) browseURL(sinkfile)
-  callFun <- function(i) {
-    dots$chain_id <- i
-    sink(sinkfile, append = TRUE)
-    on.exit(sink(NULL))
-    return(do.call(rstan::stan, args = dots))
-  }
-  stopifnot(require(parallel))
-  if (.Platform$OS.type != "windows") {
-    out <- mclapply(1:chains, FUN = callFun, mc.cores = cores, mc.silent = TRUE)
-  }
-  else { # Windows
-    cl <- makePSOCKcluster(cores)
-    on.exit(stopCluster(cl))
-    clusterExport(cl, envir = environment(), varlist = c("dots", "sinkfile"))
-    clusterEvalQ(cl, expr = require(Rcpp))
-    out <- parLapply(cl, X = 1:chains, fun = callFun)
-  }
-  if (!is.na(sound) && suppressWarnings(require(beepr, quietly = TRUE))) beep(sound)
-  if (all(sapply(out, is, class2 = "stanfit"))) {
-    out <- rstan::sflist2stanfit(out)
-  }
-  return(out)
-}
+## stan(stanProgram, optimize = FALSE, cores = parallel::detectCores(), 
+##      pedantic = FALSE, sound = 1, ...)
 
-cleanup <- function(model) {
-    model_string <- deparse(substitute(model))
-    file1 <- paste("data", model_string, sep = "_")
-    file2 <- paste("stan", model_string, sep = "_")
-    file3 <- paste("fit", model_string, sep = "_")
-    file4 <- paste("samples", model_string, sep = "_")
-    cleanup_list <- c(file1, file2, file3, file4)
-    rm(list = cleanup_list, pos = ".GlobalEnv")
-}
+# stanProgram:      Path to .stan file or program string.
+#                       (Not required if model_code, file, or fit is present.)
+# optimize:         Use sampling() (default) or optimizing().
+# cores:            Number of cores to use if sampling().
+# pedantic:         Whether to print status messages.
+#                       (These messages are dumb. Don't use this.)
+# sound:            Sound when sampling complete (if beepr is installed).
+#                       (This is fun! Sounds like a kitchen timer.)
+# ...               Other arguments passed to Stan:
+#                       In this document, we will generally call stan by
+#                       passing it a data list and a model code string.
+#                       stan(data = data_model, model_code = stan_model)
+
+########################################
+
+## cleanup
+## Cleans up the objects left over after fitting a Stan model:
+##      data_model:     The data list passed to stan.
+##      stan_model:     The model code as a character string.
+##      fit_model:      The stanfit object output.
+##      samples_model:  The samples as a data frame.
+##      params_model:   The parameters to track for plotting.
+## Returns nothing.
+
+## cleanup(model)
+
+# model:                Root name of the Stan model as character string.
+
+########################################
+
+## multiplot (winston Chang)
+## Places ggplot objects in a grid.
+## Returns nothing, but displays desired graphics.
+
+## multiplot(..., plotlist=NULL, file, cols=1, layout=NULL)
+
+# ...               One can pass ggplot objects directly.
+#                           (But it's easier to pass them as a plotlist.)
+# plotlist:         A list of ggplot objects.
+# cols:             Number of columns in layout.
+#                       If layout is not specified, multiplot will calculate
+#                       how many rows to create using cols.
+# layout:           A layout matrix.
+#                       For example:
+#                           matrix(c(1,2,3,3), nrow=2, byrow=TRUE)
+#                       Plot 1 will go in the upper left,
+#                       plot 2 will go in the upper right, and
+#                       plot 3 will go all the way across the bottom.
+#                       If present, cols is ignored.
+
+########################################
+
+## HDIofMCMC (John Kruschke)
+## Computes highest density interval from a sample of representative values,
+##      estimated as shortest credible interval.
+
+## HDIofMCMC(sampleVec , cred_mass = 0.95)
+
+# sampleVec:        A vector of representative values from a probability distribution.
+# cred_mass:        A scalar between 0 and 1, indicating the mass within the credible
+#                       interval that is to be estimated.
+
+########################################
+
+## HDI_calc
+## Calculates HDI and prepares graphical parameters to pass to ggplot.
+## Returns a list of three objects:
+##      breaks:     The breaks to use for the histogram.
+##      line_pos:   Parameters for plotting the HDI line segments.
+##      text_pos:   Parameters for plotting the text annotations.
+
+## HDI_calc(sample, cred_mass = 0.95, digits = 2)
+
+# sample:           A vector of representative values from a probability distribution.
+# cred_mass:        A scalar between 0 and 1, indicating the mass within the credible
+#                       interval that is to be estimated.
+# digits:           The number of decimal places when displaying the HDI.
+
+########################################
+
+## param_plot
+## Plots a sampled parameter along with HDI.
+## Returns a ggplot object.
+
+## param_plot(sample, param, cred_mass = 0.95)
+
+# sample:           A vector of representative values from a probability distribution.
+# param:            A string with the name of the parameters to be plotted.
+# cred_mass:        A scalar between 0 and 1, indicating the mass within the credible
+#                       interval that is to be estimated.
+
+########################################
+
+## sample_plots
+## Creates a grid of histograms of sampled parameters with HDIs.
+## Returns nothing, but displays the result of multiplot.
+
+## sample_plots(samples, params, cred_mass = 0.95, layout = NULL)
+
+# samples:          A data frame extracted from a stanfit object.
+# params:           A character vector of parameters to be plotted.
+# cred_mass:        A scalar between 0 and 1, indicating the mass within the credible
+#                       interval that is to be estimated.
+# layout:           A layout matrix.
+#                       For example:
+#                           matrix(c(1,2,3,3), nrow=2, byrow=TRUE)
+#                       Plot 1 will go in the upper left,
+#                       plot 2 will go in the upper right, and
+#                       plot 3 will go all the way across the bottom.
+#                       If present, cols is ignored.
+
+########################################
+
 ```
 
 ## Read and process data
 
 Load data.
 
-```{r}
+```{r, cache = TRUE}
 natsap <- read_csv("AllClients_rev3.csv")
 dose <- read_csv("DoseData_07-08-2015.csv")
 ```
 
 Clean data.
 
-```{r}
+```{r, cache = TRUE}
 
 ## Subset data
 
@@ -190,6 +216,27 @@ natsap_tidy <- semi_join(natsap_sub, dose_sub, by = "ID")
 dose_tidy <- semi_join(dose_sub, natsap_sub, by = "ID")
 
 
+## Get sample sizes for each program and keep only programs with more than two 
+## matched pairs
+
+sample_size <- natsap_tidy %>%
+    group_by(ID) %>%
+    summarise(n = n())
+
+dose_tidy <- dose_tidy %>%
+    inner_join(sample_size, by = "ID") %>%
+    filter(n > 2)
+
+natsap_tidy <- natsap_tidy %>%
+    semi_join(dose_tidy, by = "ID")
+
+
+## Make diff variable
+
+natsap_tidy <- natsap_tidy %>%
+    mutate(diff = OQ_A - OQ_D) # Positive scores represent improvement
+
+
 ## Give programs new random ID, consecutively numbered
 
 J <- NROW(dose_tidy)
@@ -208,21 +255,6 @@ natsap_tidy <- natsap_tidy %>%
     arrange(new_ID)
 
 
-## Make diff variable
-
-natsap_tidy <- natsap_tidy %>%
-    mutate(diff = OQ_A - OQ_D) # Positive scores represent improvement
-
-
-## Get sample sizes for each program
-
-sample_size <- natsap_tidy %>%
-    group_by(new_ID) %>%
-    summarise(n = n())
-
-dose_tidy <- dose_tidy %>%
-    inner_join(sample_size, by = "new_ID")
-    
 ## Clean up environment
 
 rm(natsap, dose, natsap_sub, dose_sub, ID_check, ID_check_dose, ID_check_natsap, J, new_ID, lookup, sample_size)
@@ -231,91 +263,109 @@ rm(natsap, dose, natsap_sub, dose_sub, ID_check, ID_check_dose, ID_check_natsap,
 
 ## Simple models
 
-First, consider `diff` alone.
+### Complete pooling model
 
-```{r}
+Consider `diff` alone. (All programs are averaged together.)
+
+```{r, cache = TRUE}
+# Model name is 'diff'
 
 data_diff <- list(y = natsap_tidy$diff,
                   n = length(natsap_tidy$diff))
 
 stan_diff <- "
-data {
-    int<lower = 0> n; # clients
-    real y[n];
-
-}
-parameters {
-    real mu;
-    real<lower = 0> sigma;
-}
-model {
-    y ~ normal(mu, sigma);
-}
+    data {
+        int<lower = 0> n; # clients
+        real y[n];
+    }
+    parameters {
+        real mu;
+        real<lower = 0> sigma;
+    }
+    model {
+        y ~ normal(mu, sigma);
+    }
 "
 
 fit_diff <- stan(data = data_diff,
                  model_code = stan_diff)
 
+
 ## Extract samples
 
-samples_diff <- as.data.frame(extract(fit_diff))
+samples_diff <- as.data.frame(fit_diff)
 
-## Chain diagnostics and posterior summary
+params_diff <- c("mu", "sigma")
+```
 
-traceplot(fit_diff, inc_warmup = FALSE)
+Show chain diagnostics and posterior summaries.
+
+```{r, fig.height= 5}
+
+## Chain diagnostics and posterior summaries.
+
+traceplot(fit_diff, pars = params_diff, inc_warmup = FALSE)
 
 print(fit_diff)
 
-ggplot(samples_diff, aes(x = mu)) + 
-    geom_histogram(color = "black", fill = "white")
-ggplot(samples_diff, aes(x = sigma)) + 
-    geom_histogram(color = "black", fill = "white")
-
-## Clean up workspace
-
-cleanup(diff)
+sample_plots(samples_diff,
+             params_diff,
+             cred_mass = 0.95,
+             layout = matrix(c(1, 2), nrow = 1, ncol = 2))
 ```
 
-Now consider `diff` by program
+Clean up workspace.
 
 ```{r}
+cleanup("diff")
+```
+
+### No pooling model
+
+Now consider `diff` by program. (In other words, each program is modeled as completely separate from other programs.)
+
+```{r, cache = TRUE}
+# Model name is 'diff_prog'
+
 data_diff_prog <- list(y = natsap_tidy$diff,
                        n = length(natsap_tidy$diff),
                        J = NROW(dose_tidy),
                        prog = natsap_tidy$new_ID)
 
 stan_diff_prog <- "
-data {
-    int<lower = 0> n;   # clients
-    int<lower = 0> J;   # programs
-    real y[n];          # diff data
-    int prog[n];        # program for each client
-
-}
-parameters {
-    real mu[J];
-    real<lower = 0> sigma[J];
-}
-model {
-    for (i in 1:n) {
-        y[i] ~ normal(mu[prog[i]], sigma[prog[i]]);
+    data {
+        int<lower = 0> n;   # clients
+        int<lower = 0> J;   # programs
+        real y[n];          # diff data
+        int prog[n];        # program for each client
     }
-}
+    parameters {
+        real mu[J];
+        real<lower = 0> sigma[J];
+    }
+    model {
+        for (i in 1:n) {
+            y[i] ~ normal(mu[prog[i]], sigma[prog[i]]);
+        }
+    }
 "
 
 fit_diff_prog <- stan(data = data_diff_prog,
                       model_code = stan_diff_prog)
 
+
 ## Extract samples
 
-samples_diff_prog <- as.data.frame(extract(fit_diff_prog))
+samples_diff_prog <- as.data.frame(fit_diff_prog)
 
-## Chain diagnostics and posterior summary
-
-# Sample 4 random programs
+# Get 4 random programs
+set.seed(4321)
 some_programs <- sort(sample(1:data_diff_prog$J, 4))
+# Display sample sizes for selected programs.
 cat("Sample sizes for programs", some_programs, ": ",
     dose_tidy[dose_tidy$new_ID %in% some_programs,"n"])
+
+# Gather up parameter names
 mus <- some_programs %>%
     as.character() %>%
     sapply(function(x) {paste("mu[", x, "]", sep = "")}) %>%
@@ -324,20 +374,32 @@ sigmas <- some_programs %>%
     as.character() %>%
     sapply(function(x) {paste("sigma[", x, "]", sep = "")}) %>%
     unname()
-pars <- c(mus, sigmas)
 
-traceplot(fit_diff_prog, pars = pars, inc_warmup = FALSE)
+params_diff_prog <- c(mus, sigmas)
+
+```
+
+Show chain diagnostics and posterior summaries.
+
+```{r, fig.height = 10}
+
+## Chain diagnostics and posterior summary
+
+traceplot(fit_diff_prog, pars = params_diff_prog, inc_warmup = FALSE)
 
 print(fit_diff_prog)
 
-# ggplot(samples_diff_prog, aes(x = mu)) + 
-#     geom_histogram(color = "black", fill = "white")
-# ggplot(samples_diff_prog, aes(x = sigma)) + 
-#     geom_histogram(color = "black", fill = "white")
+sample_plots(samples_diff_prog,
+             params_diff_prog,
+             cred_mass = 0.95,
+             layout = matrix(c(1:length(params_diff_prog)),
+                             nrow = length(params_diff_prog)/2,
+                             ncol = 2))
+```
 
-## Clean up workspace
+Clean up workspace
 
-cleanup(diff_prog)
-rm(some_programs, mus, sigmas, pars)
-
+```{r}
+cleanup("diff_prog")
+rm(some_programs, mus, sigmas)
 ```
