@@ -31,6 +31,7 @@ source("stan_utilities.R")
 ########################################
 
 ## stan
+
 ## This is a replacement for the stan function in the rstan package that
 ##      caches already compiled models and runs in parallel if possible.
 ## Returns a stanfit object.
@@ -54,6 +55,7 @@ source("stan_utilities.R")
 ########################################
 
 ## cleanup
+
 ## Cleans up the objects left over after fitting a Stan model:
 ##      data_model:     The data list passed to stan.
 ##      stan_model:     The model code as a character string.
@@ -69,6 +71,7 @@ source("stan_utilities.R")
 ########################################
 
 ## multiplot (winston Chang)
+
 ## Places ggplot objects in a grid.
 ## Returns nothing, but displays desired graphics.
 
@@ -91,6 +94,7 @@ source("stan_utilities.R")
 ########################################
 
 ## HDIofMCMC (John Kruschke)
+
 ## Computes highest density interval from a sample of representative values,
 ##      estimated as shortest credible interval.
 
@@ -103,6 +107,7 @@ source("stan_utilities.R")
 ########################################
 
 ## HDI_calc
+
 ## Calculates HDI and prepares graphical parameters to pass to ggplot.
 ## Returns a list of three objects:
 ##      breaks:     The breaks to use for the histogram.
@@ -119,6 +124,7 @@ source("stan_utilities.R")
 ########################################
 
 ## param_plot
+
 ## Plots a sampled parameter along with HDI.
 ## Returns a ggplot object.
 
@@ -132,6 +138,7 @@ source("stan_utilities.R")
 ########################################
 
 ## sample_plots
+
 ## Creates a grid of histograms of sampled parameters with HDIs.
 ## Returns nothing, but displays the result of multiplot.
 
