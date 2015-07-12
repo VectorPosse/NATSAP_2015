@@ -2,35 +2,10 @@
 
 ########################################
 
-## stan
-
-## This is a replacement for the stan function in the rstan package that
-##      caches already compiled models and runs in parallel if possible.
-## Returns a stanfit object.
-
-## stan(stanProgram, optimize = FALSE, cores = parallel::detectCores(),
-##      pedantic = FALSE, sound = 1, ...)
-
-# stanProgram:      Path to .stan file or program string.
-#                       (Not required if model_code, file, or fit is present.)
-# optimize:         Use sampling() (default) or optimizing().
-# cores:            Number of cores to use if sampling().
-# pedantic:         Whether to print status messages.
-#                       (These messages are dumb. Don't use this.)
-# sound:            Sound when sampling complete (if beepr is installed).
-#                       (This is fun! Sounds like a kitchen timer.)
-# ...               Other arguments passed to Stan:
-#                       In this document, we will generally call stan by
-#                       passing it a data list and a model code string.
-#                       stan(data = data_model, model_code = stan_model)
-
-########################################
-
 ## cleanup
 
 ## Cleans up the objects left over after fitting a Stan model:
 ##      data_model:     The data list passed to stan.
-##      stan_model:     The model code as a character string.
 ##      fit_model:      The stanfit object output.
 ##      samples_model:  The samples as a data frame.
 ##      params_model:   The parameters to track for plotting.
@@ -130,99 +105,8 @@
 
 ########################################
 
-library(rstan)
-library(parallel)
 library(dplyr)
 library(ggplot2)
-
-stan <- function(stanProgram,      # path to .stan file or program string
-                 optimize = FALSE, # use sampling() (default) or optimizing()
-                 cores = parallel::detectCores(), # number of cores to use if sampling()
-                 pedantic = FALSE, # whether to print status messages
-                 sound = 1,        # sound when sampling complete (if beepr is installed)
-                 ...) {            # further arguments to sampling() or optimizing()
-    dots <- list(...)
-    if (missing(stanProgram)) {
-        if (!is.null(dots$fit)) {
-            stanProgram <- rstan::get_stancode(dots$fit)
-        }
-        else if (!is.null(dots$file)) {
-            stanProgram <- dots$file
-            dots$file <- NULL
-        }
-        else {
-            stanProgram <- dots$model_code
-            dots$model_code <- NULL
-        }
-    }
-    if (length(stanProgram) > 1 || !grepl("stan$", stanProgram)) { # program string
-        tf <- tempfile()
-        writeLines(stanProgram, con = tf)
-        stanProgram <- file.path(dirname(tf), paste0(tools::md5sum(tf), ".stan"))
-        if (!file.exists(stanProgram)) file.rename(from = tf, to = stanProgram)
-    }
-    else if (!file.exists(stanProgram)) stop(paste(stanProgram, "does not exist"))
-
-    mtime <- file.info(stanProgram)$mtime
-    chains <- dots$chains
-    if (is.null(chains)) chains <- 4L
-    stanProgram.rda <- gsub("stan$", "rda", stanProgram)
-    if (!file.exists(stanProgram.rda) |
-        file.info(stanProgram.rda)$mtime <  mtime |
-        mtime < as.POSIXct(packageDescription("rstan")$Date) ) {
-
-        if (pedantic) cat("Model needs compilation.\n")
-        dots$chains <- 0L
-        dots$file <- stanProgram
-        stanExe <- suppressMessages(do.call(rstan::stan, args = dots))
-        saveRDS(stanExe, file = stanProgram.rda)
-        dots$file <- NULL
-    }
-    else {
-        if (pedantic) cat("Loading cached model.\n")
-        stanExe <- readRDS(stanProgram.rda)
-    }
-
-    if (optimize) {
-        dots$object <- get_stanmodel(stanExe)
-        dots$chains <- NULL
-        out <- do.call(rstan::optimizing, args = dots)
-        return(out)
-    }
-
-    # sampling()
-    dots$chains <- 1L
-    dots$fit <- stanExe
-    if (chains == 0) return(stanExe)
-    if (chains == 1) return(do.call(rstan::stan, args = dots))
-
-    dots$refresh <- 500L
-    sinkfile <- paste0(tempfile(), "_StanProgress.txt")
-    cat("Refresh to see progress\n", file = sinkfile)
-    #   if(interactive()) browseURL(sinkfile)
-    callFun <- function(i) {
-        dots$chain_id <- i
-        sink(sinkfile, append = TRUE)
-        on.exit(sink(NULL))
-        return(do.call(rstan::stan, args = dots))
-    }
-    stopifnot(require(parallel))
-    if (.Platform$OS.type != "windows") {
-        out <- mclapply(1:chains, FUN = callFun, mc.cores = cores, mc.silent = TRUE)
-    }
-    else { # Windows
-        cl <- makePSOCKcluster(cores)
-        on.exit(stopCluster(cl))
-        clusterExport(cl, envir = environment(), varlist = c("dots", "sinkfile"))
-        clusterEvalQ(cl, expr = require(Rcpp))
-        out <- parLapply(cl, X = 1:chains, fun = callFun)
-    }
-    if (!is.na(sound) && suppressWarnings(require(beepr, quietly = TRUE))) beep(sound)
-    if (all(sapply(out, is, class2 = "stanfit"))) {
-        out <- rstan::sflist2stanfit(out)
-    }
-    return(out)
-}
 
 
 cleanup <- function(model) {
@@ -307,26 +191,33 @@ HDI_calc <- function(sample, cred_mass = 0.95, digits = 2) {
     h <- hist(sample, plot = FALSE)
     top <- max(h$counts)
 
+
+    #Get median
+    sample_median <- median(sample)
+
     #Calculate endpoints of HDI
     HDI <- HDIofMCMC(sample, cred_mass)
 
     # Calculate position of line segments
-    line_pos <- data_frame(x = c(HDI[1], HDI[1], HDI[2]),
-                           xend = c(HDI[1], HDI[2], HDI[2]),
-                           y = c(0.7*top, 0, 0.7*top),
-                           yend = c(0, 0, 0),
-                           size = factor(c(1, 2, 1)),
-                           color = factor(c("blue", "black", "blue")),
-                           linetype = factor(c("dashed", "solid", "dashed")))
+    line_pos <- data_frame(x = c(HDI[1], HDI[1], HDI[2], sample_median),
+                           xend = c(HDI[1], HDI[2], HDI[2], sample_median),
+                           y = c(0.7*top, 0, 0.7*top, 0.9*top),
+                           yend = c(0, 0, 0, 0),
+                           size = factor(c(1, 2, 1, 1)),
+                           color = factor(c("blue", "black", "blue", "red")),
+                           linetype = factor(c("dashed", "solid", "dashed", "dashed")))
 
     #Calculuate position of text annotations
-    text_pos <- data_frame(x = c(HDI[1], HDI[2], (HDI[1] + HDI[2])/2),
-                           y = c(0.75*top, 0.75*top, 0.05*top),
+    text_pos <- data_frame(x = c(HDI[1],
+                                 HDI[2],
+                                 (HDI[1] + HDI[2])/2,
+                                 sample_median + 0.1),
+                           y = c(0.75*top, 0.75*top, 0.05*top, 0.91*top),
                            label = c(round(HDI[1], digits = digits),
                                      round(HDI[2], digits = digits),
-                                     paste(100*cred_mass, "% HDI", sep = ""))) %>%
-        mutate(width = strwidth(label, "inches") + 0.25,
-               height = strheight(label, "inches") + 0.25)
+                                     paste(100*cred_mass, "% HDI", sep = ""),
+                                     paste("Median = ", round(sample_median,
+                                                              digits = digits))))
 
     return(list(breaks = breaks, line_pos = line_pos, text_pos = text_pos))
 }
@@ -349,19 +240,21 @@ param_plot <- function(sample, param, cred_mass = 0.95) {
                                               color = color,
                                               linetype = linetype),
                      lineend = "round") +
-        scale_size_manual(values = c(1, 2, 1)) +
+        scale_size_manual(values = c(1, 2, 1, 1)) +
         scale_color_manual(values = c("blue" = "blue",
                                       "black" = "black",
-                                      "blue" = "blue")) +
+                                      "blue" = "blue",
+                                      "red" = "red")) +
         scale_linetype_manual(values = c("dashed" = "dashed",
                                          "solid" = "solid",
+                                         "dashed" = "dashed",
                                          "dashed" = "dashed")) +
         geom_text(data = HDI$text_pos, aes(x = x, y = y, label = label),
-                  size = 7, vjust = 0) +
+                  size = 4, vjust = 0) +
         ggtitle(param) +
-        theme(plot.title = element_text(size = rel(2)),
+        theme(plot.title = element_text(size = rel(1.5)),
               axis.title.x = element_blank(),
-              axis.text.x = element_text(size = rel(1.5)),
+              axis.text.x = element_text(size = rel(1.25)),
               axis.title.y = element_blank(),
               legend.position = "none")
 }
@@ -379,4 +272,26 @@ sample_plots <- function(samples, params, cred_mass = 0.95, layout = NULL) {
                     SIMPLIFY = FALSE)
 
     multiplot(plotlist = plots, layout = layout)
+}
+
+## NEEDS DOCUMENTATION!! ##
+
+params_per_program <- function(df) {
+    df %>%
+        summarise_each(funs(q05 = quantile(., probs = 0.05),
+                            median = quantile(., probs = 0.5),
+                            q95 = quantile(., probs = 0.95))) %>%
+        lapply(unname) %>%      # Necessary because this is a list of named numbers
+        as_data_frame() %>%
+        gather(key, value) %>%
+        separate(key, into = c("Param", "Program", "Stat"),
+                 sep = "[\\[\\]]",
+                 extra = "drop",
+                 convert = TRUE) %>%    # Separate parameter from program
+        filter(Program != "") %>%       # Keep only program-specific values
+        mutate(Program = factor(Program),
+               Stat = str_sub(Stat, start = 2)) %>%     # Remove extra _
+        unite(Parameter, Param, Stat) %>%
+        spread(Parameter, value) %>%
+        arrange(Program)
 }

@@ -1,0 +1,92 @@
+---
+title: "Stan template"
+author: "Sean Raleigh"
+date: "July 11, 2015"
+output: html_document
+---
+
+## Using this template
+
+Copy and paste this template to define and run a Stan model.
+
+* Find and replace `yourmodel` with your model name.
+* Add data to the data list defined in `data_yourmodel`.
+* Specify the Stan model code.
+* Indicate parameters to graph in `params_yourmodel`.
+* Change layout (if necessary) in the `sample_plots` function call.
+* Add extra variables (if necessary) to `rm`.
+
+## Template:
+
+Gather data to pass to Stan:
+
+```{r, cache = TRUE}
+# model name is 'yourmodel'
+
+data_yourmodel <- list()
+```
+
+Write Stan model:
+
+```{r, cache = TRUE}
+cat("
+    data {
+    }
+    parameters {
+    }
+    model {
+    }
+",
+file = "yourmodel.stan")
+```
+
+Fit Stan model:
+
+```{r, cache = TRUE}
+final_model = FALSE
+
+if (file.exists("yourmodel.rds") & final_model == TRUE) {
+    stan_yourmodel <- readRDS("yourmodel.rds")
+} else {
+    stan_yourmodel <- stan_model("yourmodel.stan")
+    saveRDS(stan_yourmodel, file = "yourmodel.rds")
+}
+
+fit_yourmodel <- sampling(stan_yourmodel, data = data_yourmodel)
+```
+
+Extract and save samples:
+
+```{r, cache = TRUE}
+samples_yourmodel <- as.data.frame(fit_yourmodel)
+
+write_csv(samples_yourmodel, path = "./yourmodel.csv")
+
+params_yourmodel <- c()
+```
+
+Show chain diagnostics and posterior summaries.
+
+```{r, fig.width = 9, fig.height = 10}
+traceplot(fit_yourmodel, pars = params_yourmodel, inc_warmup = FALSE)
+
+print(fit_yourmodel)
+
+sample_plots(samples_yourmodel,
+             params_yourmodel,
+             cred_mass = 0.95,
+             layout = matrix(c(1:length(params_yourmodel)),
+                             nrow = length(params_yourmodel)/2,
+                             ncol = 2))
+```
+
+Clean up workspace
+
+```{r}
+cleanup("yourmodel")
+rm()
+```
+
+```{r}
+beep()
+```

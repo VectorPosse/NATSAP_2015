@@ -1,5 +1,5 @@
 ---
-title: "Reproducing 2014 results in Stan"
+title: "Reproducing 2014 results in Stan- Part 1"
 author: "Sean Raleigh"
 date: "July 8, 2015"
 output: html_document
@@ -13,7 +13,7 @@ This part contains the complete pooling and no pooling models.
 
 Load necessary libraries and special functions.
 
-```{r, message = FALSE, cache = FALSE}
+```{r, message = FALSE}
 library(rstan)
 library(parallel)
 library(beepr)
@@ -27,30 +27,6 @@ library(readr)
 source("stan_utilities.R")
 
 ## The file stan_utilities.R contains the following functions:
-
-########################################
-
-## stan
-
-## This is a replacement for the stan function in the rstan package that
-##      caches already compiled models and runs in parallel if possible.
-## Returns a stanfit object.
-
-## stan(stanProgram, optimize = FALSE, cores = parallel::detectCores(), 
-##      pedantic = FALSE, sound = 1, ...)
-
-# stanProgram:      Path to .stan file or program string.
-#                       (Not required if model_code, file, or fit is present.)
-# optimize:         Use sampling() (default) or optimizing().
-# cores:            Number of cores to use if sampling().
-# pedantic:         Whether to print status messages.
-#                       (These messages are dumb. Don't use this.)
-# sound:            Sound when sampling complete (if beepr is installed).
-#                       (This is fun! Sounds like a kitchen timer.)
-# ...               Other arguments passed to Stan:
-#                       In this document, we will generally call stan by
-#                       passing it a data list and a model code string.
-#                       stan(data = data_model, model_code = stan_model)
 
 ########################################
 
@@ -164,14 +140,14 @@ source("stan_utilities.R")
 
 Load data.
 
-```{r, cache = TRUE}
+```{r}
 natsap <- read_csv("AllClients_rev3.csv")
 dose <- read_csv("DoseData_07-08-2015.csv")
 ```
 
 Clean data.
 
-```{r, cache = TRUE}
+```{r}
 
 ## Subset data
 
@@ -215,6 +191,11 @@ natsap_sub <- natsap_sub %>%
 dose_sub <- dose_sub %>%
     na.omit()
 
+## Validity check:
+## OQ scores have to be between -16 and 240.
+
+natsap_sub <- natsap_sub %>%
+    filter(OQ_A >= -16 & OQ_A <= 240 & OQ_D >= -16 & OQ_D <= 240)
 
 ## Join IDs so our tidy data sets will contain only
 ## programs for which we have dose data and matched pairs.
@@ -261,9 +242,14 @@ natsap_tidy <- natsap_tidy %>%
     inner_join(lookup, by = "ID") %>%
     arrange(new_ID)
 
+## Write tidy data sets to csv for convenience
 
+ write_csv(dose_tidy, path = "./dose_tidy_1.csv")
+ write_csv(natsap_tidy, path = "./natsap_tidy_1.csv")
+```
+
+```{r}
 ## Clean up environment
-
 rm(natsap, dose, natsap_sub, dose_sub, ID_check, ID_check_dose, ID_check_natsap, J, new_ID, lookup, sample_size)
 ```
 
@@ -274,43 +260,62 @@ rm(natsap, dose, natsap_sub, dose_sub, ID_check, ID_check_dose, ID_check_natsap,
 
 Consider `diff` alone. (All programs are averaged together.)
 
-```{r, cache = TRUE}
+Gather data to pass to Stan:
+
+```{r}
 # Model name is 'diff'
 
 data_diff <- list(y = natsap_tidy$diff,
                   n = length(natsap_tidy$diff))
+```
 
-stan_diff <- "
-    data {
-        int<lower = 0> n; # clients
-        real y[n];
-    }
-    parameters {
-        real mu;
-        real<lower = 0> sigma;
-    }
-    model {
-        y ~ normal(mu, sigma);
-    }
-"
+Write Stan model:
 
-fit_diff <- stan(data = data_diff,
-                 model_code = stan_diff)
+```{r}
+cat("
+data {
+     int<lower = 1> n;                       // clients
+     vector<lower = -256, upper = 256>[n] y; // OQ diffs
+ }
+ parameters {
+     real<lower = -256, upper = 256> mu;
+     real<lower = 0> sigma;
+ }
+ model {
+     y ~ normal(mu, sigma);
+ }
+",
+file = "diff.stan")
+```
 
+Fit Stan model:
 
-## Extract samples
+```{r}
+final_model = TRUE
 
+if (file.exists("diff.rds") & final_model == TRUE) {
+    stan_diff <- readRDS("diff.rds")
+} else {
+    stan_diff <- stan_model("diff.stan")
+    saveRDS(stan_diff, file = "diff.rds")
+}
+
+fit_diff <- sampling(stan_diff, data = data_diff)
+```
+
+Extract and save samples.
+
+```{r}
 samples_diff <- as.data.frame(fit_diff)
+
+write_csv(samples_diff, path = "./diff.csv")
 
 params_diff <- c("mu", "sigma")
 ```
 
 Show chain diagnostics and posterior summaries.
 
-```{r, fig.height= 5}
-
-## Chain diagnostics and posterior summaries.
-
+```{r, fig.width = 9}
 traceplot(fit_diff, pars = params_diff, inc_warmup = FALSE)
 
 print(fit_diff)
@@ -331,43 +336,66 @@ cleanup("diff")
 
 Now consider `diff` by program. (In other words, each program is modeled as completely separate from other programs.)
 
-```{r, cache = TRUE}
+Gather data to pass to Stan:
+
+```{r}
 # Model name is 'diff_prog'
 
 data_diff_prog <- list(y = natsap_tidy$diff,
                        n = length(natsap_tidy$diff),
                        J = NROW(dose_tidy),
                        prog = natsap_tidy$new_ID)
+```
 
-stan_diff_prog <- "
-    data {
-        int<lower = 0> n;   # clients
-        int<lower = 0> J;   # programs
-        real y[n];          # diff data
-        int prog[n];        # program for each client
+Write Stan model:
+
+```{r}
+cat("
+data {
+    int<lower = 1> n;                       // clients
+    int<lower = 1> J;                       // programs
+    vector<lower = -256, upper = 256>[n] y; // OQ diffs
+    int prog[n];                            // program for each client
+}
+parameters {
+    vector<lower = -256, upper = 256>[J] mu;
+    vector<lower = 0>[J] sigma;
+}
+model {
+    for (i in 1:n) {
+        y[i] ~ normal(mu[prog[i]], sigma[prog[i]]);
     }
-    parameters {
-        real mu[J];
-        real<lower = 0> sigma[J];
-    }
-    model {
-        for (i in 1:n) {
-            y[i] ~ normal(mu[prog[i]], sigma[prog[i]]);
-        }
-    }
-"
+}
+",
+file = "diff_prog.stan")
+```
 
-fit_diff_prog <- stan(data = data_diff_prog,
-                      model_code = stan_diff_prog)
+Fit Stan model:
 
+```{r}
+final_model = TRUE
 
-## Extract samples
+if (file.exists("diff_prog.rds") & final_model == TRUE) {
+    stan_diff_prog <- readRDS("diff_prog.rds")
+} else {
+    stan_diff_prog <- stan_model("diff_prog.stan")
+    saveRDS(stan_diff_prog, file = "diff_prog.rds")
+}
 
+fit_diff_prog <- sampling(stan_diff_prog, data = data_diff_prog)
+```
+
+Extract and save samples:
+
+```{r}
 samples_diff_prog <- as.data.frame(fit_diff_prog)
+
+write_csv(samples_diff_prog, path = "./diff_prog.csv")
 
 # Get 4 random programs
 set.seed(4321)
 some_programs <- sort(sample(1:data_diff_prog$J, 4))
+
 # Display sample sizes for selected programs.
 cat("Sample sizes for programs", some_programs, ": ",
     dose_tidy[dose_tidy$new_ID %in% some_programs,"n"])
@@ -383,15 +411,11 @@ sigmas <- some_programs %>%
     unname()
 
 params_diff_prog <- c(mus, sigmas)
-
 ```
 
 Show chain diagnostics and posterior summaries.
 
-```{r, fig.height = 10}
-
-## Chain diagnostics and posterior summary
-
+```{r, fig.width = 9, fig.height = 10}
 traceplot(fit_diff_prog, pars = params_diff_prog, inc_warmup = FALSE)
 
 print(fit_diff_prog)
@@ -409,4 +433,8 @@ Clean up workspace
 ```{r}
 cleanup("diff_prog")
 rm(some_programs, mus, sigmas)
+```
+
+```{r}
+beep()
 ```

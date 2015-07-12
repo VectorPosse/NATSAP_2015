@@ -8,3 +8,6 @@
 Reproducing_2014_Stan_cache/
 Reproducing_2014_Stan_files/
 *.html
+*.png
+*.stan
+*.rds

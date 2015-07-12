@@ -1,0 +1,127 @@
+---
+title: "Reproducing 2014 results in Stan- Part 3"
+author: "Sean Raleigh"
+date: "July 11, 2015"
+output: html_document
+---
+
+To get Stan working, we reproduce the results from the 2014 report, except we convert everything from `lme4` to Stan. (This is Part 3: the file is split up to keep compilation managaeable.)
+
+This part contains the hierarchical partial pooling model of diff by sex.
+
+## Housekeeping
+
+Load necessary libraries and special functions.
+
+```{r, message = FALSE}
+library(rstan)
+library(parallel)
+library(beepr)
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(readr)
+library(stringr)
+library(tidyr)
+library(lme4)
+```
+
+```{r}
+source("stan_utilities.R")
+```
+
+## Import data
+
+The data sets were cleaned and tidied in Part 1, so all we have to do here is import them into our workspace.
+
+```{r}
+natsap_tidy <- read_csv("natsap_tidy_1.csv")
+dose_tidy <- read.csv("dose_tidy_1.csv")
+```
+
+## Classical models
+
+### Complete pooling model, diff by sex
+
+(Complete pooling here means pooling across programs.)
+
+Gather data to pass to Stan:
+
+```{r, cache = TRUE}
+# model name is 'diff_sex'
+
+data_diff_sex <- list(y = natsap_tidy$diff,
+                      n = length(natsap_tidy$diff),
+                      sex = ifelse(natsap_tidy$sex == "MALE", 0, 1))
+```
+
+Write Stan model:
+
+```{r, cache = TRUE}
+cat("
+    data {
+        int<lower = 1> n;                       // clients
+        real<lower = -256, upper = 256> y[n];   // OQ diffs
+        int<lower = 0, upper = 1> sex[n];       // sex
+    }
+    parameters {
+        real b_sex;
+        real<lower = 0> sigma;
+    }
+    model {
+        for (i in 1:n) {
+            y[i] ~ normal(b_0 + b_sex * sex[i], sigma);
+        }
+    }
+",
+file = "diff_sex.stan")
+```
+
+Fit Stan model:
+
+```{r, cache = TRUE}
+final_model = FALSE
+
+if (file.exists("diff_sex.rda") & final_model == TRUE) {
+    stan_diff_sex <- readRDS("diff_sex.rda")
+} else {
+    stan_diff_sex <- stan_model("diff_sex.stan")
+    saveRDS(stan_diff_sex, file = "diff_sex.rda")
+}
+
+fit_diff_sex <- sampling(stan_diff_sex, data = data_diff_sex)
+```
+
+Extract and save samples:
+
+```{r, cache = TRUE}
+samples_diff_sex <- as.data.frame(fit_diff_sex)
+
+write_csv(samples_diff_sex, path = "./diff_sex.csv")
+
+params_diff_sex <- c("b_sex", "sigma")
+```
+
+Show chain diagnostics and posterior summaries.
+
+```{r, fig.width = 9, fig.height = 10}
+traceplot(fit_diff_sex, pars = params_diff_sex, inc_warmup = FALSE)
+
+print(fit_diff_sex)
+
+sample_plots(samples_diff_sex,
+             params_diff_sex,
+             cred_mass = 0.95,
+             layout = matrix(c(1,2), ncol = 2))
+```
+
+Clean up workspace
+
+```{r}
+cleanup("diff_sex")
+rm()
+```
+
+```{r}
+beep()
+```
