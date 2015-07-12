@@ -5,6 +5,11 @@ date: "July 11, 2015"
 output: html_document
 ---
 
+```{r}
+library(knitr)
+opts_chunk$set(eval = FALSE)
+```
+
 ## Using this template
 
 Copy and paste this template to define and run a Stan model.
@@ -15,12 +20,13 @@ Copy and paste this template to define and run a Stan model.
 * Indicate parameters to graph in `params_yourmodel`.
 * Change layout (if necessary) in the `sample_plots` function call.
 * Add extra variables (if necessary) to `rm`.
+* When you have a working model, change `final_model` to TRUE.
 
 ## Template:
 
 Gather data to pass to Stan:
 
-```{r, cache = TRUE}
+```{r}
 # model name is 'yourmodel'
 
 data_yourmodel <- list()
@@ -28,7 +34,7 @@ data_yourmodel <- list()
 
 Write Stan model:
 
-```{r, cache = TRUE}
+```{r}
 cat("
     data {
     }
@@ -42,7 +48,7 @@ file = "yourmodel.stan")
 
 Fit Stan model:
 
-```{r, cache = TRUE}
+```{r}
 final_model = FALSE
 
 if (file.exists("yourmodel.rds") & final_model == TRUE) {
@@ -57,7 +63,7 @@ fit_yourmodel <- sampling(stan_yourmodel, data = data_yourmodel)
 
 Extract and save samples:
 
-```{r, cache = TRUE}
+```{r}
 samples_yourmodel <- as.data.frame(fit_yourmodel)
 
 write_csv(samples_yourmodel, path = "./yourmodel.csv")
@@ -65,26 +71,27 @@ write_csv(samples_yourmodel, path = "./yourmodel.csv")
 params_yourmodel <- c()
 ```
 
-Show chain diagnostics and posterior summaries.
+Show chain diagnostics and posterior summaries:
 
 ```{r, fig.width = 9, fig.height = 10}
 traceplot(fit_yourmodel, pars = params_yourmodel, inc_warmup = FALSE)
 
 print(fit_yourmodel)
 
+len <- length(params_yourmodel)
 sample_plots(samples_yourmodel,
              params_yourmodel,
              cred_mass = 0.95,
-             layout = matrix(c(1:length(params_yourmodel)),
-                             nrow = length(params_yourmodel)/2,
+             layout = matrix(c(1:(len + len %% 2)),
+                             nrow = (len + len %% 2)/2,
                              ncol = 2))
 ```
 
-Clean up workspace
+Clean up workspace:
 
 ```{r}
 cleanup("yourmodel")
-rm()
+rm(final_model, len)
 ```
 
 ```{r}

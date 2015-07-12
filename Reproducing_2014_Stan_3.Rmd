@@ -7,7 +7,7 @@ output: html_document
 
 To get Stan working, we reproduce the results from the 2014 report, except we convert everything from `lme4` to Stan. (This is Part 3: the file is split up to keep compilation managaeable.)
 
-This part contains the hierarchical partial pooling model of diff by sex.
+This part contains the classical and hierarchical models of diff by sex.
 
 ## Housekeeping
 
@@ -47,7 +47,7 @@ dose_tidy <- read.csv("dose_tidy_1.csv")
 
 Gather data to pass to Stan:
 
-```{r, cache = TRUE}
+```{r}
 # model name is 'diff_sex'
 
 data_diff_sex <- list(y = natsap_tidy$diff,
@@ -57,21 +57,20 @@ data_diff_sex <- list(y = natsap_tidy$diff,
 
 Write Stan model:
 
-```{r, cache = TRUE}
+```{r}
 cat("
     data {
         int<lower = 1> n;                       // clients
-        real<lower = -256, upper = 256> y[n];   // OQ diffs
-        int<lower = 0, upper = 1> sex[n];       // sex
+        vector<lower = -256, upper = 256>[n] y; // OQ diffs
+        vector<lower = 0, upper = 1>[n] sex;    // sex
     }
     parameters {
-        real b_sex;
+        real b_0;                               // intercept
+        real b_sex;                             // coefficient of sex
         real<lower = 0> sigma;
     }
     model {
-        for (i in 1:n) {
-            y[i] ~ normal(b_0 + b_sex * sex[i], sigma);
-        }
+        y ~ normal(b_0 + b_sex * sex, sigma);
     }
 ",
 file = "diff_sex.stan")
@@ -79,14 +78,14 @@ file = "diff_sex.stan")
 
 Fit Stan model:
 
-```{r, cache = TRUE}
-final_model = FALSE
+```{r}
+final_model = TRUE
 
 if (file.exists("diff_sex.rda") & final_model == TRUE) {
-    stan_diff_sex <- readRDS("diff_sex.rda")
+    stan_diff_sex <- readRDS("diff_sex.rds")
 } else {
     stan_diff_sex <- stan_model("diff_sex.stan")
-    saveRDS(stan_diff_sex, file = "diff_sex.rda")
+    saveRDS(stan_diff_sex, file = "diff_sex.rds")
 }
 
 fit_diff_sex <- sampling(stan_diff_sex, data = data_diff_sex)
@@ -94,32 +93,247 @@ fit_diff_sex <- sampling(stan_diff_sex, data = data_diff_sex)
 
 Extract and save samples:
 
-```{r, cache = TRUE}
+```{r}
 samples_diff_sex <- as.data.frame(fit_diff_sex)
 
 write_csv(samples_diff_sex, path = "./diff_sex.csv")
 
-params_diff_sex <- c("b_sex", "sigma")
+params_diff_sex <- c("b_0", "b_sex", "sigma")
 ```
 
-Show chain diagnostics and posterior summaries.
+Show chain diagnostics and posterior summaries:
 
-```{r, fig.width = 9, fig.height = 10}
+```{r, fig.width = 9}
 traceplot(fit_diff_sex, pars = params_diff_sex, inc_warmup = FALSE)
 
 print(fit_diff_sex)
 
+len <- length(params_diff_sex)
 sample_plots(samples_diff_sex,
              params_diff_sex,
              cred_mass = 0.95,
-             layout = matrix(c(1,2), ncol = 2))
+             layout = matrix(c(1:(len + len %% 2)),
+                             nrow = (len + len %% 2)/2,
+                             ncol = 2))
 ```
 
-Clean up workspace
+Clean up workspace:
 
 ```{r}
 cleanup("diff_sex")
-rm()
+rm(final_model, len)
+```
+
+### No pooling model, diff by sex
+
+Gather data to pass to Stan:
+
+```{r}
+# model name is 'diff_prog_sex'
+
+data_diff_prog_sex <- list(y = natsap_tidy$diff,
+                           n = length(natsap_tidy$diff),
+                           sex = ifelse(natsap_tidy$sex == "MALE", 0, 1),
+                           J = NROW(dose_tidy),
+                           prog = natsap_tidy$new_ID)
+```
+
+Write Stan model:
+
+```{r}
+cat("
+    data {
+        int<lower = 1> n;                       // clients
+        vector<lower = -256, upper = 256>[n] y; // OQ diffs
+        vector<lower = 0, upper = 1>[n] sex;    // sex
+        int<lower = 1> J;                       // programs
+        int prog[n];                            // program for each client
+    }
+    parameters {
+        real b_sex;                              // coefficient of sex
+        vector<lower = -256, upper = 256>[J] mu; // program means for males
+        vector<lower = 0>[J] sigma;              // program sds
+    }
+    model {
+        for (i in 1:n) {
+            y[i] ~ normal(mu[prog[i]] + b_sex * sex[i], sigma[prog[i]]);
+        }
+    }
+",
+file = "diff_prog_sex.stan")
+```
+
+Fit Stan model:
+
+```{r}
+final_model = TRUE
+
+if (file.exists("diff_prog_sex.rds") & final_model == TRUE) {
+    stan_diff_prog_sex <- readRDS("diff_prog_sex.rds")
+} else {
+    stan_diff_prog_sex <- stan_model("diff_prog_sex.stan")
+    saveRDS(stan_diff_prog_sex, file = "diff_prog_sex.rds")
+}
+
+fit_diff_prog_sex <- sampling(stan_diff_prog_sex, data = data_diff_prog_sex)
+```
+
+Extract and save samples:
+
+```{r}
+samples_diff_prog_sex <- as.data.frame(fit_diff_prog_sex)
+
+write_csv(samples_diff_prog_sex, path = "./diff_prog_sex.csv")
+
+# Get 4 random programs
+set.seed(12)
+some_programs <- sort(sample(1:data_diff_prog_sex$J, 4))
+
+# Display sample sizes for selected programs.
+cat("Sample sizes for programs", some_programs, ": ",
+    dose_tidy[dose_tidy$new_ID %in% some_programs,"n"])
+
+# Gather up parameter names
+mus <- some_programs %>%
+    as.character() %>%
+    sapply(function(x) {paste("mu[", x, "]", sep = "")}) %>%
+    unname()
+sigmas <- some_programs %>%
+    as.character() %>%
+    sapply(function(x) {paste("sigma[", x, "]", sep = "")}) %>%
+    unname()
+
+params_diff_prog_sex <- c(mus, "b_sex", sigmas)
+```
+
+Show chain diagnostics and posterior summaries:
+
+```{r, fig.width = 9, fig.height = 12}
+traceplot(fit_diff_prog_sex, pars = params_diff_prog_sex, inc_warmup = FALSE)
+
+print(fit_diff_prog_sex)
+
+len <- length(params_diff_prog_sex)
+sample_plots(samples_diff_prog_sex,
+             params_diff_prog_sex,
+             cred_mass = 0.95,
+             layout = matrix(c(1:(len + len %% 2)),
+                             nrow = (len + len %% 2)/2,
+                             ncol = 2))
+```
+
+Clean up workspace:
+
+```{r}
+cleanup("diff_prog_sex")
+rm(final_model, len, some_programs, mus, sigmas)
+```
+
+## Hierarchical model
+
+### Partial pooling model, diff by sex
+
+Gather data to pass to Stan:
+
+```{r}
+# model name is 'diff_prog_sex_hier'
+
+data_diff_prog_sex_hier <- list(y = natsap_tidy$diff,
+                           n = length(natsap_tidy$diff),
+                           sex = ifelse(natsap_tidy$sex == "MALE", 0, 1),
+                           J = NROW(dose_tidy),
+                           prog = natsap_tidy$new_ID)
+```
+
+Write Stan model:
+
+```{r}
+cat("
+    data {
+        int<lower = 1> n;                       // clients
+        int<lower = 1> J;                       // programs
+        vector<lower = -256, upper = 256>[n] y; // OQ diffs
+        int prog[n];                            // program for each client
+        vector<lower = 0, upper = 1>[n] sex;    // sex
+    }
+    parameters {
+        real mu_a;                              // prior mean on alpha (intercepts)
+        real b_sex;                              // coefficient of sex
+        real<lower = 0> sigma_a;                // prior sd on alpha (intercepts)
+        vector<lower = -256, upper = 256>[J] a; // program-level intercepts
+        real<lower = 0> sigma_y;                // data-level sd
+    }
+    model {
+        // Implicit uniform priors on mu_a, sigma_a, and sigma_y
+        a ~ normal(mu_a, sigma_a);
+        for (i in 1:n) {
+            y[i] ~ normal(a[prog[i]] + b_sex * sex[i], sigma_y);
+        }
+    }
+",
+file = "diff_prog_sex_hier.stan")
+```
+
+Fit Stan model:
+
+```{r}
+final_model = TRUE
+
+if (file.exists("diff_prog_sex_hier.rds") & final_model == TRUE) {
+    stan_diff_prog_sex_hier <- readRDS("diff_prog_sex_hier.rds")
+} else {
+    stan_diff_prog_sex_hier <- stan_model("diff_prog_sex_hier.stan")
+    saveRDS(stan_diff_prog_sex_hier, file = "diff_prog_sex_hier.rds")
+}
+
+fit_diff_prog_sex_hier <- sampling(stan_diff_prog_sex_hier, data = data_diff_prog_sex_hier)
+```
+
+Extract and save samples:
+
+```{r}
+samples_diff_prog_sex_hier <- as.data.frame(fit_diff_prog_sex_hier)
+
+write_csv(samples_diff_prog_sex_hier, path = "./diff_prog_sex_hier.csv")
+
+# Get 4 random programs
+set.seed(5678)
+some_programs <- sort(sample(1:data_diff_prog_sex_hier$J, 4))
+
+# Display sample sizes for selected programs.
+cat("Sample sizes for programs", some_programs, ": ",
+    dose_tidy[dose_tidy$new_ID %in% some_programs,"n"])
+
+# Gather up parameter names
+alphas <- some_programs %>%
+    as.character() %>%
+    sapply(function(x) {paste("a[", x, "]", sep = "")}) %>%
+    unname()
+
+params_diff_prog_sex_hier <- c("mu_a", "sigma_a", "b_sex",  "sigma_y", alphas)
+```
+
+Show chain diagnostics and posterior summaries:
+
+```{r, fig.width = 9, fig.height = 10}
+traceplot(fit_diff_prog_sex_hier, pars = params_diff_prog_sex_hier, inc_warmup = FALSE)
+
+print(fit_diff_prog_sex_hier)
+
+len <- length(params_diff_prog_sex_hier)
+sample_plots(samples_diff_prog_sex_hier,
+             params_diff_prog_sex_hier,
+             cred_mass = 0.95,
+             layout = matrix(c(1:(len + len %% 2)),
+                             nrow = (len + len %% 2)/2,
+                             ncol = 2, byrow = TRUE))
+```
+
+Clean up workspace:
+
+```{r}
+cleanup("diff_prog_sex_hier")
+rm(final_model, len, some_programs, alphas)
 ```
 
 ```{r}
