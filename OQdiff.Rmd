@@ -1,0 +1,397 @@
+---
+title: "NATSAP- OQ diff"
+author: "Sean Raleigh"
+date: "July 10, 2015"
+output: html_document
+---
+
+This document contains the simplest analysis for OQ differences with no predictors.
+
+## Housekeeping
+
+Load necessary libraries and special functions.
+
+```{r, message = FALSE}
+library(rstan)
+library(parallel)
+library(beepr)
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(readr)
+library(stringr)
+library(tidyr)
+library(lme4)
+```
+
+```{r}
+source("stan_utilities.R")
+```
+
+
+## Import data
+
+```{r}
+natsap_tidy <- read_csv("./tidydata/natsap_tidy_1.csv")
+dose_tidy <- read.csv("./tidydata/dose_tidy_1.csv")
+```
+
+
+## Complete pooling model
+
+Consider `OQdiff` alone. (All programs are averaged together.)
+
+Gather data to pass to Stan:
+
+```{r}
+# Model name is 'OQdiff'
+
+data_OQdiff <- list(y = natsap_tidy$OQdiff,
+                  n = length(natsap_tidy$OQdiff))
+```
+
+Write Stan model:
+
+```{r}
+cat("
+    data {
+        int<lower = 1> n;                       // clients
+        vector<lower = -256, upper = 256>[n] y; // OQ diffs
+    }
+    parameters {
+        real<lower = -256, upper = 256> mu;
+        real<lower = 0> sigma;
+    }
+    model {
+        // Implicit uniform priors on mu and sigma
+        y ~ normal(mu, sigma);
+    }
+",
+file = "./OQdiff/OQdiff.stan")
+```
+
+Fit Stan model:
+
+```{r}
+final_model = TRUE
+
+if (file.exists("./OQdiff/OQdiff.rds") & final_model == TRUE) {
+    stan_OQdiff <- readRDS("./OQdiff/OQdiff.rds")
+} else {
+    stan_OQdiff <- stan_model("./OQdiff/OQdiff.stan")
+    saveRDS(stan_OQdiff, file = "./OQdiff/OQdiff.rds")
+}
+
+fit_OQdiff <- sampling(stan_OQdiff, data = data_OQdiff)
+```
+
+Extract and save samples.
+
+```{r}
+samples_OQdiff <- as.data.frame(fit_OQdiff)
+
+write_csv(samples_OQdiff, path = "./OQdiff/OQdiff.csv")
+
+params_OQdiff <- c("mu", "sigma")
+```
+
+Show chain diagnostics and posterior summaries.
+
+```{r, fig.width = 9}
+traceplot(fit_OQdiff, pars = params_OQdiff, inc_warmup = FALSE)
+
+print(fit_OQdiff)
+
+len <- length(params_OQdiff)
+sample_plots(samples_OQdiff,
+             params = params_OQdiff,
+             cred_mass = 0.95,
+             layout = matrix(c(1:(len + len %% 2)),
+                             nrow = (len + len %% 2)/2,
+                             ncol = 2))
+```
+
+Clean up workspace.
+
+```{r, results = 'hide'}
+cleanup("OQdiff")
+rm(final_model, len)
+gc()
+```
+
+
+## No pooling model
+
+Now consider `OQdiff` by program. (In other words, each program is modeled as completely separate from other programs.)
+
+Gather data to pass to Stan:
+
+```{r}
+# Model name is 'OQdiff_prog'
+
+data_OQdiff_prog <- list(y = natsap_tidy$OQdiff,
+                       n = length(natsap_tidy$OQdiff),
+                       J = NROW(dose_tidy),
+                       prog = natsap_tidy$new_ID)
+```
+
+Write Stan model:
+
+```{r}
+cat("
+    data {
+        int<lower = 1> n;                       // clients
+        int<lower = 1> J;                       // programs
+        vector<lower = -256, upper = 256>[n] y; // OQ diffs
+        int prog[n];                            // program for each client
+    }
+    parameters {
+        vector<lower = -256, upper = 256>[J] mu;
+        vector<lower = 0>[J] sigma;
+    }
+    model {
+        // Implicit uniform priors on mus and sigmas
+        for (i in 1:n) {
+            y[i] ~ normal(mu[prog[i]], sigma[prog[i]]);
+        }
+    }
+",
+file = "./OQdiff/OQdiff_prog.stan")
+```
+
+Fit Stan model:
+
+```{r}
+final_model = TRUE
+
+if (file.exists("./OQdiff/OQdiff_prog.rds") & final_model == TRUE) {
+    stan_OQdiff_prog <- readRDS("./OQdiff/OQdiff_prog.rds")
+} else {
+    stan_OQdiff_prog <- stan_model("./OQdiff/OQdiff_prog.stan")
+    saveRDS(stan_OQdiff_prog, file = "./OQdiff/OQdiff_prog.rds")
+}
+
+fit_OQdiff_prog <- sampling(stan_OQdiff_prog, data = data_OQdiff_prog)
+```
+
+Extract and save samples:
+
+```{r}
+samples_OQdiff_prog <- as.data.frame(fit_OQdiff_prog)
+
+write_csv(samples_OQdiff_prog, path = "./OQdiff/OQdiff_prog.csv")
+
+# Get 4 random programs
+set.seed(1234)
+some_programs <- sort(sample(1:data_OQdiff_prog$J, 4))
+
+# Display sample sizes for selected programs.
+cat("Sample sizes for programs", some_programs, ": ",
+    dose_tidy[dose_tidy$new_ID %in% some_programs,"n"])
+
+# Gather up parameter names
+mus <- some_programs %>%
+    as.character() %>%
+    sapply(function(x) {paste("mu[", x, "]", sep = "")}) %>%
+    unname()
+sigmas <- some_programs %>%
+    as.character() %>%
+    sapply(function(x) {paste("sigma[", x, "]", sep = "")}) %>%
+    unname()
+
+params_OQdiff_prog <- c(mus, sigmas)
+```
+
+Show chain diagnostics and posterior summaries.
+
+```{r, fig.width = 9, fig.height = 10}
+traceplot(fit_OQdiff_prog, pars = params_OQdiff_prog, inc_warmup = FALSE)
+
+print(fit_OQdiff_prog)
+
+len <- length(params_OQdiff_prog)
+sample_plots(samples_OQdiff_prog,
+             params = params_OQdiff_prog,
+             cred_mass = 0.95,
+             layout = matrix(c(1:(len + len %% 2)),
+                             nrow = (len + len %% 2)/2,
+                             ncol = 2))
+```
+
+Clean up workspace
+
+```{r, results = 'hide'}
+cleanup("OQdiff_prog")
+rm(final_model, len, some_programs, mus, sigmas)
+gc()
+```
+
+
+## Partial pooling model
+
+This is a varying-intecept hierarchical model. This allows partial pooling and will cause the programs with small sample sizes to shrink to the complete pooling mean.
+
+Gather data to pass to Stan:
+
+```{r}
+# Model name is 'OQdiff_prog_hier'
+
+data_OQdiff_prog_hier <- list(y = natsap_tidy$OQdiff,
+                            n = length(natsap_tidy$OQdiff),
+                            J = NROW(dose_tidy),
+                            prog = natsap_tidy$new_ID)
+```
+
+Write Stan model:
+
+```{r}
+cat("
+    data {
+        int<lower = 1> n;                       // clients
+        int<lower = 1> J;                       // programs
+        vector<lower = -256, upper = 256>[n] y; // OQ diffs
+        int prog[n];                            // program for each client
+    }
+    parameters {
+        real mu_a;                              // prior mean on alpha (intercepts)
+        real<lower = 0> sigma_a;                // prior sd on alpha (intercepts)
+        vector<lower = -256, upper = 256>[J] a; // program-level intercepts
+        real<lower = 0> sigma_y;                // data-level sd
+    }
+    model {
+        // Implicit uniform priors on mu_a, sigma_a, and sigma_y
+        a ~ normal(mu_a, sigma_a);
+        for (i in 1:n) {
+            y[i] ~ normal(a[prog[i]], sigma_y);
+        }
+    }
+",
+file = "./OQdiff/OQdiff_prog_hier.stan")
+```
+
+Fit Stan model:
+
+```{r}
+final_model = TRUE
+
+if (file.exists("./OQdiff/OQdiff_prog_hier.rds") & final_model == TRUE) {
+    stan_OQdiff_prog_hier <- readRDS("./OQdiff/OQdiff_prog_hier.rds")
+} else {
+    stan_OQdiff_prog_hier <- stan_model("./OQdiff/OQdiff_prog_hier.stan")
+    saveRDS(stan_OQdiff_prog_hier, file = "./OQdiff/OQdiff_prog_hier.rds")
+}
+
+fit_OQdiff_prog_hier <- sampling(stan_OQdiff_prog_hier, data = data_OQdiff_prog_hier)
+```
+
+Extract and save samples:
+
+```{r}
+samples_OQdiff_prog_hier <- as.data.frame(fit_OQdiff_prog_hier)
+
+write_csv(samples_OQdiff_prog_hier, path = "./OQdiff/OQdiff_prog_hier.csv")
+
+# Get 5 random programs
+set.seed(1234)
+some_programs <- sort(sample(1:data_OQdiff_prog_hier$J, 5))
+
+# Display sample sizes for selected programs.
+cat("Sample sizes for programs", some_programs, ": ",
+    dose_tidy[dose_tidy$new_ID %in% some_programs,"n"])
+
+# Gather up parameter names
+alphas <- some_programs %>%
+    as.character() %>%
+    sapply(function(x) {paste("a[", x, "]", sep = "")}) %>%
+    unname()
+
+params_OQdiff_prog_hier <- c("mu_a", "sigma_a", alphas, "sigma_y")
+```
+
+Show chain diagnostics and posterior summaries.
+
+```{r, fig.width = 9, fig.height = 10}
+traceplot(fit_OQdiff_prog_hier, pars = params_OQdiff_prog_hier, inc_warmup = FALSE)
+
+print(fit_OQdiff_prog_hier)
+
+len <- length(params_OQdiff_prog_hier)
+sample_plots(samples_OQdiff_prog_hier,
+             params = params_OQdiff_prog_hier,
+             cred_mass = 0.95,
+             layout = matrix(c(1:(len + len %% 2)),
+                             nrow = (len + len %% 2)/2,
+                             ncol = 2, byrow = TRUE))
+```
+
+Clean up workspace.
+
+```{r, results = 'hide'}
+cleanup("OQdiff_prog_hier")
+rm(final_model, len, some_programs, alphas)
+gc()
+```
+
+## Discussion
+
+One can see the effect of partial pooling in the graph below.
+
+```{r, fig.width = 9}
+## Import OQdiff.csv, OQdiff_prog.csv, and OQdiff_prog_hier.csv
+
+samples_OQdiff <- read_csv("./OQdiff/OQdiff.csv")
+samples_OQdiff_prog <- read_csv("./OQdiff/OQdiff_prog.csv")
+samples_OQdiff_prog_hier <- read_csv("./OQdiff/OQdiff_prog_hier.csv")
+
+
+## Gather up all the parameters of interest into a single data frame
+
+plot_stats_no_pooling <- params_per_program(samples_OQdiff_prog) %>%
+    select(Program, Median = mu_median, q025 = mu_q025, q975 = mu_q975) %>%
+    mutate(Model = "No pooling")
+plot_stats_partial_pooling <- params_per_program(samples_OQdiff_prog_hier) %>%
+    select(Program, Median = a_median, q025 = a_q025, q975 = a_q975) %>%
+    mutate(Model = "Partial pooling")
+plot_stats <- rbind(plot_stats_no_pooling, plot_stats_partial_pooling)
+
+
+## Plot complete pooling vs no pooling vs partial pooling
+
+ggplot(plot_stats) +
+    geom_pointrange(aes(x = Program,
+                        y = Median,
+                        ymin = q025,
+                        ymax = q975,
+                        color = Model),
+                   position = position_dodge(width = 0.5)) +
+    geom_hline(aes(color = "#619CFF"),
+               color = "#619CFF",
+               yintercept = median(samples_OQdiff$mu)) + 
+    scale_color_manual(values = c("No pooling" = "#F8766D",
+                                  "Partial pooling" = "#00BA38",
+                                  "Complete pooling" = "#619CFF"),
+                       limits = c("No pooling",
+                                  "Partial pooling",
+                                  "Complete pooling")) +
+    ylab("OQ diff (with 95% credible interval)") +
+    theme(title = element_text(size = rel(1.5)))
+```
+
+The results agree with `lmer`.
+
+```{r}
+test_lmer <- lmer(OQdiff ~ 1 + (1 | new_ID), data = natsap_tidy)
+fixef(test_lmer)
+ranef(test_lmer)
+```
+
+Clean up workspace
+
+```{r, results = 'hide'}
+rm(samples_OQdiff, samples_OQdiff_prog, samples_OQdiff_prog_hier, test_lmer, plot_stats, plot_stats_no_pooling, plot_stats_partial_pooling)
+gc()
+```
+
+```{r}
+beep()
+```

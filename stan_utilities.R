@@ -17,6 +17,36 @@
 
 ########################################
 
+## HDI_calc
+
+## Calculates HDI and prepares graphical parameters to pass to ggplot.
+## Returns a list of three objects:
+##      breaks:     The breaks to use for the histogram.
+##      line_pos:   Parameters for plotting the HDI line segments.
+##      text_pos:   Parameters for plotting the text annotations.
+
+## HDI_calc(sample, cred_mass = 0.95, digits = 2)
+
+# sample:           A vector of representative values from a probability distribution.
+# cred_mass:        A scalar between 0 and 1, indicating the mass within the credible
+#                       interval that is to be estimated.
+# digits:           The number of decimal places when displaying the HDI.
+
+########################################
+
+## HDIofMCMC (John Kruschke)
+
+## Computes highest density interval from a sample of representative values,
+##      estimated as shortest credible interval.
+
+## HDIofMCMC(sampleVec , cred_mass = 0.95)
+
+# sampleVec:        A vector of representative values from a probability distribution.
+# cred_mass:        A scalar between 0 and 1, indicating the mass within the credible
+#                       interval that is to be estimated.
+
+########################################
+
 ## multiplot (winston Chang)
 
 ## Places ggplot objects in a grid.
@@ -40,33 +70,18 @@
 
 ########################################
 
-## HDIofMCMC (John Kruschke)
+## params_per_program
 
-## Computes highest density interval from a sample of representative values,
-##      estimated as shortest credible interval.
+## Takes a list of sampled parameters for a collection of programs and refactors
+## it so that each row is a program and the columns contain summaries of the
+## parameters that correspond to that program.
+## Returns a data frame.
 
-## HDIofMCMC(sampleVec , cred_mass = 0.95)
+## params_per_program(df)
 
-# sampleVec:        A vector of representative values from a probability distribution.
-# cred_mass:        A scalar between 0 and 1, indicating the mass within the credible
-#                       interval that is to be estimated.
-
-########################################
-
-## HDI_calc
-
-## Calculates HDI and prepares graphical parameters to pass to ggplot.
-## Returns a list of three objects:
-##      breaks:     The breaks to use for the histogram.
-##      line_pos:   Parameters for plotting the HDI line segments.
-##      text_pos:   Parameters for plotting the text annotations.
-
-## HDI_calc(sample, cred_mass = 0.95, digits = 2)
-
-# sample:           A vector of representative values from a probability distribution.
-# cred_mass:        A scalar between 0 and 1, indicating the mass within the credible
-#                       interval that is to be estimated.
-# digits:           The number of decimal places when displaying the HDI.
+# df:               A data frame of MCMC samples. For this to work, program-level
+#                   parameters should be of the form 'param[#]' where # is the
+#                   corresponding program new_ID.
 
 ########################################
 
@@ -105,9 +120,12 @@
 
 ########################################
 
+
 library(dplyr)
 library(ggplot2)
 
+
+##### cleanup #####
 
 cleanup <- function(model) {
     file1 <- paste("data", model, sep = "_")
@@ -119,6 +137,78 @@ cleanup <- function(model) {
     rm(list = cleanup_list, pos = ".GlobalEnv")
 }
 
+
+##### HDI_calc #####
+
+HDI_calc <- function(sample, cred_mass = 0.95, digits = 2) {
+    # Get the breaks the way the hist function does.
+    breaks <- pretty(range(sample),
+                     n = nclass.Sturges(sample),
+                     min.n = 1)
+    # Get histogram output to calculate tallest bar
+    h <- hist(sample, plot = FALSE)
+    top <- max(h$counts)
+
+
+    #Get median
+    sample_median <- median(sample)
+
+    #Calculate endpoints of HDI
+    HDI <- HDIofMCMC(sample, cred_mass)
+
+    # Calculate position of line segments
+    line_pos <- data_frame(x = c(HDI[1], HDI[1], HDI[2], sample_median),
+                           xend = c(HDI[1], HDI[2], HDI[2], sample_median),
+                           y = c(0.7*top, 0, 0.7*top, 0.9*top),
+                           yend = c(0, 0, 0, 0),
+                           size = factor(c(1, 2, 1, 1)),
+                           color = factor(c("blue", "black", "blue", "red")),
+                           linetype = factor(c("dashed", "solid", "dashed", "dashed")))
+
+    #Calculuate position of text annotations
+    text_pos <- data_frame(x = c(HDI[1],
+                                 HDI[2],
+                                 0.25*HDI[1] + 0.75*HDI[2],
+                                 sample_median),
+                           y = c(0.75*top, 0.75*top, 0.05*top, 0.91*top),
+                           label = c(round(HDI[1], digits = digits),
+                                     round(HDI[2], digits = digits),
+                                     paste(100*cred_mass, "% HDI", sep = ""),
+                                     paste("Median = ", round(sample_median,
+                                                              digits = digits))))
+
+    return(list(breaks = breaks, line_pos = line_pos, text_pos = text_pos))
+}
+
+
+##### HDIofMCMC #####
+
+HDIofMCMC = function(sampleVec , cred_mass = 0.95) {
+    # Computes highest density interval from a sample of representative values,
+    #   estimated as shortest credible interval.
+    # Arguments:
+    #   sampleVec
+    #     is a vector of representative values from a probability distribution.
+    #   cred_mass
+    #     is a scalar between 0 and 1, indicating the mass within the credible
+    #     interval that is to be estimated.
+    # Value:
+    #   HDIlim is a vector containing the limits of the HDI
+    sortedPts = sort( sampleVec )
+    ciIdxInc = floor( cred_mass * length( sortedPts ) )
+    nCIs = length( sortedPts ) - ciIdxInc
+    ciWidth = rep( 0 , nCIs )
+    for (i in 1:nCIs) {
+        ciWidth[ i ] = sortedPts[ i + ciIdxInc ] - sortedPts[ i ]
+    }
+    HDImin = sortedPts[ which.min( ciWidth ) ]
+    HDImax = sortedPts[ which.min( ciWidth ) + ciIdxInc ]
+    HDIlim = c( HDImin , HDImax )
+    return( HDIlim )
+}
+
+
+##### multiplot #####
 
 multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
     library(grid)
@@ -157,71 +247,30 @@ multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
 }
 
 
-HDIofMCMC = function(sampleVec , cred_mass = 0.95) {
-    # Computes highest density interval from a sample of representative values,
-    #   estimated as shortest credible interval.
-    # Arguments:
-    #   sampleVec
-    #     is a vector of representative values from a probability distribution.
-    #   cred_mass
-    #     is a scalar between 0 and 1, indicating the mass within the credible
-    #     interval that is to be estimated.
-    # Value:
-    #   HDIlim is a vector containing the limits of the HDI
-    sortedPts = sort( sampleVec )
-    ciIdxInc = floor( cred_mass * length( sortedPts ) )
-    nCIs = length( sortedPts ) - ciIdxInc
-    ciWidth = rep( 0 , nCIs )
-    for (i in 1:nCIs) {
-        ciWidth[ i ] = sortedPts[ i + ciIdxInc ] - sortedPts[ i ]
-    }
-    HDImin = sortedPts[ which.min( ciWidth ) ]
-    HDImax = sortedPts[ which.min( ciWidth ) + ciIdxInc ]
-    HDIlim = c( HDImin , HDImax )
-    return( HDIlim )
+##### params_per_program #####
+
+params_per_program <- function(df) {
+    df %>%
+        summarise_each(funs(q025 = quantile(., probs = 0.025),
+                            median = quantile(., probs = 0.5),
+                            q975 = quantile(., probs = 0.975))) %>%
+        lapply(unname) %>%      # Necessary because this is a list of named numbers
+        as_data_frame() %>%
+        gather(key, value) %>%
+        separate(key, into = c("Param", "Program", "Stat"),
+                 sep = "[\\[\\]]",
+                 extra = "drop",
+                 convert = TRUE) %>%    # Separate parameter from program from stat
+        filter(Program != "") %>%       # Keep only program-specific values
+        mutate(Program = factor(Program),
+               Stat = str_sub(Stat, start = 2)) %>%     # Remove extra _
+        unite(Parameter, Param, Stat) %>%
+        spread(Parameter, value) %>%
+        arrange(Program)
 }
 
 
-HDI_calc <- function(sample, cred_mass = 0.95, digits = 2) {
-    # Get the breaks the way the hist function does.
-    breaks <- pretty(range(sample),
-                     n = nclass.Sturges(sample),
-                     min.n = 1)
-    # Get histogram output to calculate tallest bar
-    h <- hist(sample, plot = FALSE)
-    top <- max(h$counts)
-
-
-    #Get median
-    sample_median <- median(sample)
-
-    #Calculate endpoints of HDI
-    HDI <- HDIofMCMC(sample, cred_mass)
-
-    # Calculate position of line segments
-    line_pos <- data_frame(x = c(HDI[1], HDI[1], HDI[2], sample_median),
-                           xend = c(HDI[1], HDI[2], HDI[2], sample_median),
-                           y = c(0.7*top, 0, 0.7*top, 0.9*top),
-                           yend = c(0, 0, 0, 0),
-                           size = factor(c(1, 2, 1, 1)),
-                           color = factor(c("blue", "black", "blue", "red")),
-                           linetype = factor(c("dashed", "solid", "dashed", "dashed")))
-
-    #Calculuate position of text annotations
-    text_pos <- data_frame(x = c(HDI[1],
-                                 HDI[2],
-                                 (HDI[1] + HDI[2])/2,
-                                 sample_median + 0.1),
-                           y = c(0.75*top, 0.75*top, 0.05*top, 0.91*top),
-                           label = c(round(HDI[1], digits = digits),
-                                     round(HDI[2], digits = digits),
-                                     paste(100*cred_mass, "% HDI", sep = ""),
-                                     paste("Median = ", round(sample_median,
-                                                              digits = digits))))
-
-    return(list(breaks = breaks, line_pos = line_pos, text_pos = text_pos))
-}
-
+##### param_plot #####
 
 param_plot <- function(sample, param, cred_mass = 0.95) {
 
@@ -260,6 +309,7 @@ param_plot <- function(sample, param, cred_mass = 0.95) {
 }
 
 
+##### sample_plots #####
 
 sample_plots <- function(samples, params, cred_mass = 0.95, layout = NULL) {
     # Subset samples by only the desired parameters
@@ -272,26 +322,4 @@ sample_plots <- function(samples, params, cred_mass = 0.95, layout = NULL) {
                     SIMPLIFY = FALSE)
 
     multiplot(plotlist = plots, layout = layout)
-}
-
-## NEEDS DOCUMENTATION!! ##
-
-params_per_program <- function(df) {
-    df %>%
-        summarise_each(funs(q05 = quantile(., probs = 0.05),
-                            median = quantile(., probs = 0.5),
-                            q95 = quantile(., probs = 0.95))) %>%
-        lapply(unname) %>%      # Necessary because this is a list of named numbers
-        as_data_frame() %>%
-        gather(key, value) %>%
-        separate(key, into = c("Param", "Program", "Stat"),
-                 sep = "[\\[\\]]",
-                 extra = "drop",
-                 convert = TRUE) %>%    # Separate parameter from program
-        filter(Program != "") %>%       # Keep only program-specific values
-        mutate(Program = factor(Program),
-               Stat = str_sub(Stat, start = 2)) %>%     # Remove extra _
-        unite(Parameter, Param, Stat) %>%
-        spread(Parameter, value) %>%
-        arrange(Program)
 }

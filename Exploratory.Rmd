@@ -1,21 +1,17 @@
 ---
-title: "Reproducing 2014 results in Stan- Part 1"
+title: "NATSAP- Exploratory Data Analysis"
 author: "Sean Raleigh"
 date: "July 8, 2015"
 output: html_document
 ---
 
-To get Stan working, we reproduce the results from the 2014 report, except we convert everything from `lme4` to Stan. (This is Part 1: the file is split up to keep compilation managaeable.)
-
-This part contains the complete pooling and no pooling models.
+In this document, we clean the data and store it for use in other models. Then we do some basic exploratory data analysis to get to know the data better.
 
 ## Housekeeping
 
 Load necessary libraries and special functions.
 
 ```{r, message = FALSE}
-library(rstan)
-library(parallel)
 library(beepr)
 library(dplyr)
 library(ggplot2)
@@ -34,7 +30,6 @@ source("stan_utilities.R")
 
 ## Cleans up the objects left over after fitting a Stan model:
 ##      data_model:     The data list passed to stan.
-##      stan_model:     The model code as a character string.
 ##      fit_model:      The stanfit object output.
 ##      samples_model:  The samples as a data frame.
 ##      params_model:   The parameters to track for plotting.
@@ -43,6 +38,36 @@ source("stan_utilities.R")
 ## cleanup(model)
 
 # model:                Root name of the Stan model as character string.
+
+########################################
+
+## HDI_calc
+
+## Calculates HDI and prepares graphical parameters to pass to ggplot.
+## Returns a list of three objects:
+##      breaks:     The breaks to use for the histogram.
+##      line_pos:   Parameters for plotting the HDI line segments.
+##      text_pos:   Parameters for plotting the text annotations.
+
+## HDI_calc(sample, cred_mass = 0.95, digits = 2)
+
+# sample:           A vector of representative values from a probability distribution.
+# cred_mass:        A scalar between 0 and 1, indicating the mass within the credible
+#                       interval that is to be estimated.
+# digits:           The number of decimal places when displaying the HDI.
+
+########################################
+
+## HDIofMCMC (John Kruschke)
+
+## Computes highest density interval from a sample of representative values,
+##      estimated as shortest credible interval.
+
+## HDIofMCMC(sampleVec , cred_mass = 0.95)
+
+# sampleVec:        A vector of representative values from a probability distribution.
+# cred_mass:        A scalar between 0 and 1, indicating the mass within the credible
+#                       interval that is to be estimated.
 
 ########################################
 
@@ -69,33 +94,18 @@ source("stan_utilities.R")
 
 ########################################
 
-## HDIofMCMC (John Kruschke)
+## params_per_program
 
-## Computes highest density interval from a sample of representative values,
-##      estimated as shortest credible interval.
+## Takes a list of sampled parameters for a collection of programs and refactors
+## it so that each row is a program and the columns contain summaries of the
+## parameters that correspond to that program.
+## Returns a data frame.
 
-## HDIofMCMC(sampleVec , cred_mass = 0.95)
+## params_per_program(df)
 
-# sampleVec:        A vector of representative values from a probability distribution.
-# cred_mass:        A scalar between 0 and 1, indicating the mass within the credible
-#                       interval that is to be estimated.
-
-########################################
-
-## HDI_calc
-
-## Calculates HDI and prepares graphical parameters to pass to ggplot.
-## Returns a list of three objects:
-##      breaks:     The breaks to use for the histogram.
-##      line_pos:   Parameters for plotting the HDI line segments.
-##      text_pos:   Parameters for plotting the text annotations.
-
-## HDI_calc(sample, cred_mass = 0.95, digits = 2)
-
-# sample:           A vector of representative values from a probability distribution.
-# cred_mass:        A scalar between 0 and 1, indicating the mass within the credible
-#                       interval that is to be estimated.
-# digits:           The number of decimal places when displaying the HDI.
+# df:               A data frame of MCMC samples. For this to work, program-level
+#                   parameters should be of the form 'param[#]' where # is the
+#                   corresponding program new_ID.
 
 ########################################
 
@@ -133,7 +143,6 @@ source("stan_utilities.R")
 #                       If present, cols is ignored.
 
 ########################################
-
 ```
 
 ## Read and process data
@@ -141,11 +150,11 @@ source("stan_utilities.R")
 Load data.
 
 ```{r}
-natsap <- read_csv("AllClients_rev3.csv")
-dose <- read_csv("DoseData_07-08-2015.csv")
+natsap <- read_csv("./data/AllClients_rev3.csv")
+dose <- read_csv("./data/DoseData_07-08-2015.csv")
 ```
 
-Clean data.
+Clean data and write to the `tidydata` folder.
 
 ```{r}
 
@@ -191,11 +200,13 @@ natsap_sub <- natsap_sub %>%
 dose_sub <- dose_sub %>%
     na.omit()
 
+
 ## Validity check:
 ## OQ scores have to be between -16 and 240.
 
 natsap_sub <- natsap_sub %>%
     filter(OQ_A >= -16 & OQ_A <= 240 & OQ_D >= -16 & OQ_D <= 240)
+
 
 ## Join IDs so our tidy data sets will contain only
 ## programs for which we have dose data and matched pairs.
@@ -219,10 +230,10 @@ natsap_tidy <- natsap_tidy %>%
     semi_join(dose_tidy, by = "ID")
 
 
-## Make diff variable
+## Make OQdiff variable
 
 natsap_tidy <- natsap_tidy %>%
-    mutate(diff = OQ_A - OQ_D) # Positive scores represent improvement
+    mutate(OQdiff = OQ_A - OQ_D) # Positive scores represent improvement
 
 
 ## Give programs new random ID, consecutively numbered
@@ -242,198 +253,21 @@ natsap_tidy <- natsap_tidy %>%
     inner_join(lookup, by = "ID") %>%
     arrange(new_ID)
 
+
 ## Write tidy data sets to csv for convenience
 
- write_csv(dose_tidy, path = "./dose_tidy_1.csv")
- write_csv(natsap_tidy, path = "./natsap_tidy_1.csv")
-```
+write_csv(dose_tidy, path = "./tidydata/dose_tidy_1.csv")
+write_csv(natsap_tidy, path = "./tidydata/natsap_tidy_1.csv")
 
-```{r}
+
 ## Clean up environment
+ 
 rm(natsap, dose, natsap_sub, dose_sub, ID_check, ID_check_dose, ID_check_natsap, J, new_ID, lookup, sample_size)
 ```
 
+## Exploratory data analysis
 
-## Simple models
-
-### Complete pooling model
-
-Consider `diff` alone. (All programs are averaged together.)
-
-Gather data to pass to Stan:
-
-```{r}
-# Model name is 'diff'
-
-data_diff <- list(y = natsap_tidy$diff,
-                  n = length(natsap_tidy$diff))
-```
-
-Write Stan model:
-
-```{r}
-cat("
-data {
-     int<lower = 1> n;                       // clients
-     vector<lower = -256, upper = 256>[n] y; // OQ diffs
- }
- parameters {
-     real<lower = -256, upper = 256> mu;
-     real<lower = 0> sigma;
- }
- model {
-     y ~ normal(mu, sigma);
- }
-",
-file = "diff.stan")
-```
-
-Fit Stan model:
-
-```{r}
-final_model = TRUE
-
-if (file.exists("diff.rds") & final_model == TRUE) {
-    stan_diff <- readRDS("diff.rds")
-} else {
-    stan_diff <- stan_model("diff.stan")
-    saveRDS(stan_diff, file = "diff.rds")
-}
-
-fit_diff <- sampling(stan_diff, data = data_diff)
-```
-
-Extract and save samples.
-
-```{r}
-samples_diff <- as.data.frame(fit_diff)
-
-write_csv(samples_diff, path = "./diff.csv")
-
-params_diff <- c("mu", "sigma")
-```
-
-Show chain diagnostics and posterior summaries.
-
-```{r, fig.width = 9}
-traceplot(fit_diff, pars = params_diff, inc_warmup = FALSE)
-
-print(fit_diff)
-
-sample_plots(samples_diff,
-             params_diff,
-             cred_mass = 0.95,
-             layout = matrix(c(1, 2), nrow = 1, ncol = 2))
-```
-
-Clean up workspace.
-
-```{r}
-cleanup("diff")
-```
-
-### No pooling model
-
-Now consider `diff` by program. (In other words, each program is modeled as completely separate from other programs.)
-
-Gather data to pass to Stan:
-
-```{r}
-# Model name is 'diff_prog'
-
-data_diff_prog <- list(y = natsap_tidy$diff,
-                       n = length(natsap_tidy$diff),
-                       J = NROW(dose_tidy),
-                       prog = natsap_tidy$new_ID)
-```
-
-Write Stan model:
-
-```{r}
-cat("
-data {
-    int<lower = 1> n;                       // clients
-    int<lower = 1> J;                       // programs
-    vector<lower = -256, upper = 256>[n] y; // OQ diffs
-    int prog[n];                            // program for each client
-}
-parameters {
-    vector<lower = -256, upper = 256>[J] mu;
-    vector<lower = 0>[J] sigma;
-}
-model {
-    for (i in 1:n) {
-        y[i] ~ normal(mu[prog[i]], sigma[prog[i]]);
-    }
-}
-",
-file = "diff_prog.stan")
-```
-
-Fit Stan model:
-
-```{r}
-final_model = TRUE
-
-if (file.exists("diff_prog.rds") & final_model == TRUE) {
-    stan_diff_prog <- readRDS("diff_prog.rds")
-} else {
-    stan_diff_prog <- stan_model("diff_prog.stan")
-    saveRDS(stan_diff_prog, file = "diff_prog.rds")
-}
-
-fit_diff_prog <- sampling(stan_diff_prog, data = data_diff_prog)
-```
-
-Extract and save samples:
-
-```{r}
-samples_diff_prog <- as.data.frame(fit_diff_prog)
-
-write_csv(samples_diff_prog, path = "./diff_prog.csv")
-
-# Get 4 random programs
-set.seed(4321)
-some_programs <- sort(sample(1:data_diff_prog$J, 4))
-
-# Display sample sizes for selected programs.
-cat("Sample sizes for programs", some_programs, ": ",
-    dose_tidy[dose_tidy$new_ID %in% some_programs,"n"])
-
-# Gather up parameter names
-mus <- some_programs %>%
-    as.character() %>%
-    sapply(function(x) {paste("mu[", x, "]", sep = "")}) %>%
-    unname()
-sigmas <- some_programs %>%
-    as.character() %>%
-    sapply(function(x) {paste("sigma[", x, "]", sep = "")}) %>%
-    unname()
-
-params_diff_prog <- c(mus, sigmas)
-```
-
-Show chain diagnostics and posterior summaries.
-
-```{r, fig.width = 9, fig.height = 10}
-traceplot(fit_diff_prog, pars = params_diff_prog, inc_warmup = FALSE)
-
-print(fit_diff_prog)
-
-sample_plots(samples_diff_prog,
-             params_diff_prog,
-             cred_mass = 0.95,
-             layout = matrix(c(1:length(params_diff_prog)),
-                             nrow = length(params_diff_prog)/2,
-                             ncol = 2))
-```
-
-Clean up workspace
-
-```{r}
-cleanup("diff_prog")
-rm(some_programs, mus, sigmas)
-```
+[to do]
 
 ```{r}
 beep()

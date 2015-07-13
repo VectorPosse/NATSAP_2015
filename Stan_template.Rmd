@@ -14,6 +14,8 @@ opts_chunk$set(eval = FALSE)
 
 Copy and paste this template to define and run a Stan model.
 
+* Create a new folder in the main working directory called `root`. (Usually `root` is the name of your complete pooling model. E.g., if you are working on a model called `OQdiff_sex_prog_hier`, then your root folder would be `OQdiff_sex`. This will also usually be the name of the `.rmd` file in which you're working.)
+* Find and replace all instances of `root`.
 * Find and replace `yourmodel` with your model name.
 * Add data to the data list defined in `data_yourmodel`.
 * Specify the Stan model code.
@@ -29,33 +31,33 @@ Gather data to pass to Stan:
 ```{r}
 # model name is 'yourmodel'
 
-data_yourmodel <- list()
+data_yourmodel <- list() ##### <----- ADD DATA HERE. #####
 ```
 
 Write Stan model:
 
 ```{r}
 cat("
-    data {
+    data {                ##### <----- ADD MODEL HERE. #####
     }
     parameters {
     }
     model {
     }
 ",
-file = "yourmodel.stan")
+file = "./root/yourmodel.stan")
 ```
 
 Fit Stan model:
 
 ```{r}
-final_model = FALSE
+final_model = FALSE ##### <----- CHANGE TO TRUE ONCE THE MODEL WORKS. #####
 
-if (file.exists("yourmodel.rds") & final_model == TRUE) {
-    stan_yourmodel <- readRDS("yourmodel.rds")
+if (file.exists("./root/yourmodel.rds") & final_model == TRUE) {
+    stan_yourmodel <- readRDS("./root/yourmodel.rds")
 } else {
-    stan_yourmodel <- stan_model("yourmodel.stan")
-    saveRDS(stan_yourmodel, file = "yourmodel.rds")
+    stan_yourmodel <- stan_model("./root/yourmodel.stan")
+    saveRDS(stan_yourmodel, file = "./root/yourmodel.rds")
 }
 
 fit_yourmodel <- sampling(stan_yourmodel, data = data_yourmodel)
@@ -66,9 +68,9 @@ Extract and save samples:
 ```{r}
 samples_yourmodel <- as.data.frame(fit_yourmodel)
 
-write_csv(samples_yourmodel, path = "./yourmodel.csv")
+write_csv(samples_yourmodel, path = "./root/yourmodel.csv")
 
-params_yourmodel <- c()
+params_yourmodel <- c() ##### <----- ADD PARAMETERS HERE. #####
 ```
 
 Show chain diagnostics and posterior summaries:
@@ -80,18 +82,19 @@ print(fit_yourmodel)
 
 len <- length(params_yourmodel)
 sample_plots(samples_yourmodel,
-             params_yourmodel,
+             params = params_yourmodel,
              cred_mass = 0.95,
              layout = matrix(c(1:(len + len %% 2)),
                              nrow = (len + len %% 2)/2,
-                             ncol = 2))
+                             ncol = 2))  ##### <----- CHANGE THIS (IF NEEDED). #####
 ```
 
 Clean up workspace:
 
-```{r}
+```{r, results = 'hide'}
 cleanup("yourmodel")
-rm(final_model, len)
+rm(final_model, len) ##### <----- ADD VARIABLES HERE (IF NEEDED). #####
+gc()
 ```
 
 ```{r}
