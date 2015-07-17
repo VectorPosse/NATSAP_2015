@@ -46,8 +46,8 @@ Gather data to pass to Stan:
 # model name is 'OQdiff_sex'
 
 data_OQdiff_sex <- list(y = natsap_tidy$OQdiff,
-                      n = length(natsap_tidy$OQdiff),
-                      sex = ifelse(natsap_tidy$sex == "MALE", 0, 1))
+                        n = length(natsap_tidy$OQdiff),
+                        sex = ifelse(natsap_tidy$sex == "MALE", 0, 1))
 ```
 
 Write Stan model:
@@ -60,13 +60,13 @@ cat("
         vector<lower = 0, upper = 1>[n] sex;    // sex
     }
     parameters {
-        real b_0;                               // intercept
-        real b_sex;                             // coefficient of sex
+        real intercept;                               // intercept
+        real female;                             // coefficient of sex
         real<lower = 0> sigma;
     }
     model {
-        // Implicit uniform priors on b_0, b_sex, and sigma
-        y ~ normal(b_0 + b_sex * sex, sigma);
+        // Implicit uniform priors on intercept, female, and sigma
+        y ~ normal(intercept + female * sex, sigma);
     }
 ",
 file = "./OQdiff_sex/OQdiff_sex.stan")
@@ -94,7 +94,7 @@ samples_OQdiff_sex <- as.data.frame(fit_OQdiff_sex)
 
 write_csv(samples_OQdiff_sex, path = "./OQdiff_sex/OQdiff_sex.csv")
 
-params_OQdiff_sex <- c("b_0", "b_sex", "sigma")
+params_OQdiff_sex <- c("intercept", "female", "sigma")
 ```
 
 Show chain diagnostics and posterior summaries:
@@ -149,14 +149,14 @@ cat("
         int prog[n];                            // program for each client
     }
     parameters {
-        real b_sex;                              // coefficient of sex
+        real female;                              // coefficient of sex
         vector<lower = -256, upper = 256>[J] mu; // program means for males
         vector<lower = 0>[J] sigma;              // program sds
     }
     model {
-        // Implicit uniform priors on b_sex, mus, and sigmas
+        // Implicit uniform priors on female, mus, and sigmas
         for (i in 1:n) {
-            y[i] ~ normal(mu[prog[i]] + b_sex * sex[i], sigma[prog[i]]);
+            y[i] ~ normal(mu[prog[i]] + female * sex[i], sigma[prog[i]]);
         }
     }
 ",
@@ -203,7 +203,7 @@ sigmas <- some_programs %>%
     sapply(function(x) {paste("sigma[", x, "]", sep = "")}) %>%
     unname()
 
-params_OQdiff_sex_prog <- c(mus, "b_sex", sigmas)
+params_OQdiff_sex_prog <- c(mus, "female", sigmas)
 ```
 
 Show chain diagnostics and posterior summaries:
@@ -260,7 +260,7 @@ cat("
     }
     parameters {
         real mu_a;                              // prior mean on alpha (intercepts)
-        real b_sex;                              // coefficient of sex
+        real female;                              // coefficient of sex
         real<lower = 0> sigma_a;                // prior sd on alpha (intercepts)
         vector<lower = -256, upper = 256>[J] a; // program-level intercepts
         real<lower = 0> sigma_y;                // data-level sd
@@ -269,7 +269,7 @@ cat("
         // Implicit uniform priors on mu_a, sigma_a, and sigma_y
         a ~ normal(mu_a, sigma_a);
         for (i in 1:n) {
-            y[i] ~ normal(a[prog[i]] + b_sex * sex[i], sigma_y);
+            y[i] ~ normal(a[prog[i]] + female * sex[i], sigma_y);
         }
     }
 ",
@@ -313,7 +313,7 @@ alphas <- some_programs %>%
     sapply(function(x) {paste("a[", x, "]", sep = "")}) %>%
     unname()
 
-params_OQdiff_sex_prog_hier <- c("mu_a", "sigma_a", "b_sex",  "sigma_y", alphas)
+params_OQdiff_sex_prog_hier <- c("mu_a", "sigma_a", "female",  "sigma_y", alphas)
 ```
 
 Show chain diagnostics and posterior summaries:

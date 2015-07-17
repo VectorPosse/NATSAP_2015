@@ -1,0 +1,131 @@
+---
+title: "NATSAP- OQ diff by RTCWT"
+author: "Sean Raleigh"
+date: "July 12, 2015"
+output: html_document
+---
+
+This document contains the analyis of OQ difference with RTC/WT as a predictor.
+
+## Housekeeping
+
+Load necessary libraries and special functions.
+
+```{r, message = FALSE}
+library(rstan)
+library(parallel)
+library(beepr)
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(readr)
+library(stringr)
+library(tidyr)
+library(lme4)
+```
+
+```{r}
+source("stan_utilities.R")
+```
+
+## Import data
+
+```{r}
+natsap_tidy <- read_csv("./tidydata/natsap_tidy_1.csv")
+dose_tidy <- read.csv("./tidydata/dose_tidy_1.csv")
+```
+
+
+## No pooling
+
+Here we analyze OQ diff by for RTC and WT separately. (Complete pooling here would just be OQdiff, which has already been analyzed.)
+
+Gather data to pass to Stan:
+
+```{r}
+# model name is 'OQdiff_RTCWT'
+
+# Grab RTCWT status for each client.
+RTCWT <- dose_tidy$RTCWT[natsap_tidy$new_ID]
+RTCWT <- ifelse(RTCWT == "RTC", 1, 2)  # 1 = RTC, 2 = WT
+
+data_OQdiff_RTCWT <- list(y = natsap_tidy$OQdiff,
+                          n = length(natsap_tidy$OQdiff),
+                          RTCWT = RTCWT)
+```
+
+Write Stan model:
+
+```{r}
+cat("
+    data {
+        int<lower = 1> n;                       // clients
+        vector<lower = -256, upper = 256>[n] y; // OQ diffs
+        int<lower = 1, upper = 2> RTCWT[n];     // RTC/WT
+    }
+    parameters {
+        vector<lower = -256, upper = 256>[2] mu;
+        vector<lower = 0>[2] sigma;
+    }
+    model {
+        // Implicit uniform priors on mus and sigmas
+        for (i in 1:n) {
+            y[i] ~ normal(mu[RTCWT[i]], sigma[RTCWT[i]]);
+        }
+    }
+",
+file = "./OQdiff_RTCWT/OQdiff_RTCWT.stan")
+```
+
+Fit Stan model:
+
+```{r}
+final_model = FALSE
+
+if (file.exists("./OQdiff_RTCWT/OQdiff_RTCWT.rds") & final_model == TRUE) {
+    stan_OQdiff_RTCWT <- readRDS("./OQdiff_RTCWT/OQdiff_RTCWT.rds")
+} else {
+    stan_OQdiff_RTCWT <- stan_model("./OQdiff_RTCWT/OQdiff_RTCWT.stan")
+    saveRDS(stan_OQdiff_RTCWT, file = "./OQdiff_RTCWT/OQdiff_RTCWT.rds")
+}
+
+fit_OQdiff_RTCWT <- sampling(stan_OQdiff_RTCWT, data = data_OQdiff_RTCWT)
+```
+
+Extract and save samples:
+
+```{r}
+samples_OQdiff_RTCWT <- as.data.frame(fit_OQdiff_RTCWT)
+
+write_csv(samples_OQdiff_RTCWT, path = "./OQdiff_RTCWT/OQdiff_RTCWT.csv")
+
+params_OQdiff_RTCWT <- c("mu[1]", "mu[2]", "sigma[1]", "sigma[2]")
+```
+
+Show chain diagnostics and posterior summaries:
+
+```{r, fig.width = 9}
+traceplot(fit_OQdiff_RTCWT, pars = params_OQdiff_RTCWT, inc_warmup = FALSE)
+
+print(fit_OQdiff_RTCWT)
+
+len <- length(params_OQdiff_RTCWT)
+sample_plots(samples_OQdiff_RTCWT,
+             params = params_OQdiff_RTCWT,
+             cred_mass = 0.95,
+             layout = matrix(c(1:(len + len %% 2)),
+                             nrow = (len + len %% 2)/2,
+                             ncol = 2))
+```
+
+Clean up workspace:
+
+```{r, results = 'hide'}
+cleanup("OQdiff_RTCWT")
+rm(final_model, len)
+gc()
+```
+
+```{r}
+beep()
+```

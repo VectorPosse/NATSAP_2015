@@ -87,6 +87,7 @@ sample_plots(samples_yourmodel,
              layout = matrix(c(1:(len + len %% 2)),
                              nrow = (len + len %% 2)/2,
                              ncol = 2))  ##### <----- CHANGE THIS (IF NEEDED). #####
+                                         ##### E.g., byrow = TRUE is common    #####
 ```
 
 Clean up workspace:
