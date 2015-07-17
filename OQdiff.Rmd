@@ -50,6 +50,10 @@ data_OQdiff <- list(y = natsap_tidy$OQdiff,
                   n = length(natsap_tidy$OQdiff))
 ```
 
+Mathematical model:
+
+$$ y_{i} \sim N(\mu, \sigma), \quad 1 \leq i \leq n $$
+
 Write Stan model:
 
 ```{r}
@@ -134,6 +138,10 @@ data_OQdiff_prog <- list(y = natsap_tidy$OQdiff,
                        J = NROW(dose_tidy),
                        prog = natsap_tidy$new_ID)
 ```
+
+Mathematical model:
+
+$$ y_{i} \sim N\left(\mu_{j[i]}, \sigma_{j[i]}\right), \quad 1 \leq i \leq n $$
 
 Write Stan model:
 
@@ -242,6 +250,11 @@ data_OQdiff_prog_hier <- list(y = natsap_tidy$OQdiff,
                             prog = natsap_tidy$new_ID)
 ```
 
+Mathematical model:
+
+$$ \alpha_{j} \sim N\left(\mu_{\alpha}, \sigma_{\alpha}\right), \quad 1 \leq j \leq J $$
+$$ y_{i} \sim N\left(\alpha_{j[i]}, \sigma_{y}\right), \quad 1 \leq i \leq n $$
+
 Write Stan model:
 
 ```{r}
@@ -253,7 +266,7 @@ cat("
         int prog[n];                            // program for each client
     }
     parameters {
-        real mu_a;                              // prior mean on alpha (intercepts)
+        real<lower = -256, upper = 256> mu_a;   // prior mean on alpha (intercepts)
         real<lower = 0> sigma_a;                // prior sd on alpha (intercepts)
         vector<lower = -256, upper = 256>[J] a; // program-level intercepts
         real<lower = 0> sigma_y;                // data-level sd

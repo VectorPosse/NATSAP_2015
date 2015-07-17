@@ -80,7 +80,7 @@
 ## params_per_program(df)
 
 # df:               A data frame of MCMC samples. For this to work, program-level
-#                   parameters should be of the form 'param[#]' where # is the
+#                   parameter names should be of the form 'param[#]' where # is the
 #                   corresponding program new_ID.
 
 ########################################

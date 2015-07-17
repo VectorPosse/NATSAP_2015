@@ -54,6 +54,10 @@ data_OQdiff_RTCWT <- list(y = natsap_tidy$OQdiff,
                           RTCWT = RTCWT)
 ```
 
+Mathematical model:
+
+$$ y_{i} \sim N\left( \mu_{RTCWT[i]}, \sigma_{RTCWT[i]} \right), \quad 1 \leq i \leq n $$
+
 Write Stan model:
 
 ```{r}
@@ -80,7 +84,7 @@ file = "./OQdiff_RTCWT/OQdiff_RTCWT.stan")
 Fit Stan model:
 
 ```{r}
-final_model = FALSE
+final_model = TRUE
 
 if (file.exists("./OQdiff_RTCWT/OQdiff_RTCWT.rds") & final_model == TRUE) {
     stan_OQdiff_RTCWT <- readRDS("./OQdiff_RTCWT/OQdiff_RTCWT.rds")
@@ -123,6 +127,123 @@ Clean up workspace:
 ```{r, results = 'hide'}
 cleanup("OQdiff_RTCWT")
 rm(final_model, len)
+gc()
+```
+
+
+## Partial pooling model
+
+Here we explore what it might look like to use RTCWT as a group-level predictor.
+
+Gather data to pass to Stan:
+
+```{r}
+# model name is 'OQdiff_RTCWT_hier'
+
+data_OQdiff_RTCWT_hier <- list(y = natsap_tidy$OQdiff,
+                               n = length(natsap_tidy$OQdiff),
+                               RTCWT = ifelse(dose_tidy$RTCWT == "RTC", 0, 1),
+                                    # 0 = RTC, 1 = WT
+                               J = NROW(dose_tidy),
+                               prog = natsap_tidy$new_ID)
+```
+
+Mathematical model:
+
+$$ \alpha_{j} \sim N\left(\gamma_{\alpha} + 
+    \gamma_{WT} RTCWT_{j}, \sigma_{\alpha} \right), \quad 1 \leq j \leq J $$
+$$ y_{i} \sim N\left( \alpha_{j[i]}, \sigma_{y} \right), \quad 1 \leq i \leq n $$
+
+Write Stan model:
+
+```{r}
+cat("
+    data {
+        int<lower = 1> n;                       // clients
+        vector<lower = -256, upper = 256>[n] y; // OQ diffs
+        int<lower = 1> J;                       // number of programs
+        int prog[n];                            // programs
+        vector<lower = 0, upper = 1>[J] RTCWT;  // RTC/WT
+        
+    }
+    parameters {
+        real<lower = -256, upper = 256> gamma_a; // program-level mean
+        real<lower = -256, upper = 256> WT;      // coefficient of RTC/WT        
+        real<lower = 0> sigma_a;                 // program-level sd
+        vector<lower = -256, upper = 256>[J] a;  // program intercepts
+        real<lower = 0> sigma_y;                 // data-level sd
+    }
+    model {
+        // Implicit uniform priors on mus and sigmas
+        a ~ normal(gamma_a + WT * RTCWT, sigma_a);
+        for (i in 1:n) {
+            y[i] ~ normal(a[prog[i]], sigma_y);
+        }
+    }
+",
+file = "./OQdiff_RTCWT/OQdiff_RTCWT_hier.stan")
+```
+
+Fit Stan model:
+
+```{r}
+final_model = TRUE
+
+if (file.exists("./OQdiff_RTCWT/OQdiff_RTCWT_hier.rds") & final_model == TRUE) {
+    stan_OQdiff_RTCWT_hier <- readRDS("./OQdiff_RTCWT/OQdiff_RTCWT_hier.rds")
+} else {
+    stan_OQdiff_RTCWT_hier <- stan_model("./OQdiff_RTCWT/OQdiff_RTCWT_hier.stan")
+    saveRDS(stan_OQdiff_RTCWT_hier, file = "./OQdiff_RTCWT/OQdiff_RTCWT_hier.rds")
+}
+
+fit_OQdiff_RTCWT_hier <- sampling(stan_OQdiff_RTCWT_hier, data = data_OQdiff_RTCWT_hier)
+```
+
+Extract and save samples:
+
+```{r}
+samples_OQdiff_RTCWT_hier <- as.data.frame(fit_OQdiff_RTCWT_hier)
+
+write_csv(samples_OQdiff_RTCWT_hier, path = "./OQdiff_RTCWT/OQdiff_RTCWT_hier.csv")
+
+# Get 4 random programs
+set.seed(1234)
+some_programs <- sort(sample(1:data_OQdiff_RTCWT_hier$J, 4))
+
+# Display sample sizes for selected programs.
+cat("Sample sizes for programs", some_programs, ": ",
+    dose_tidy[dose_tidy$new_ID %in% some_programs,"n"])
+
+# Gather up parameter names
+alphas <- some_programs %>%
+    as.character() %>%
+    sapply(function(x) {paste("a[", x, "]", sep = "")}) %>%
+    unname()
+
+params_OQdiff_RTCWT_hier <- c("gamma_a", "sigma_a", "WT", "sigma_y", alphas)
+```
+
+Show chain diagnostics and posterior summaries:
+
+```{r, fig.width = 9, fig.height = 10}
+traceplot(fit_OQdiff_RTCWT_hier, pars = params_OQdiff_RTCWT_hier, inc_warmup = FALSE)
+
+print(fit_OQdiff_RTCWT_hier)
+
+len <- length(params_OQdiff_RTCWT_hier)
+sample_plots(samples_OQdiff_RTCWT_hier,
+             params = params_OQdiff_RTCWT_hier,
+             cred_mass = 0.95,
+             layout = matrix(c(1:(len + len %% 2)),
+                             nrow = (len + len %% 2)/2,
+                             ncol = 2, byrow = TRUE))
+```
+
+Clean up workspace:
+
+```{r, results = 'hide'}
+cleanup("OQdiff_RTCWT_hier")
+rm(final_model, len, some_programs, alphas)
 gc()
 ```
 

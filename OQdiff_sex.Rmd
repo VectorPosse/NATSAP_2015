@@ -50,6 +50,11 @@ data_OQdiff_sex <- list(y = natsap_tidy$OQdiff,
                         sex = ifelse(natsap_tidy$sex == "MALE", 0, 1))
 ```
 
+Mathematical model:
+
+$$ y_{i} \sim N\left( \beta_{0} + \beta_{female} sex, \sigma \right), \quad
+        1 \leq i \leq n $$
+
 Write Stan model:
 
 ```{r}
@@ -60,8 +65,8 @@ cat("
         vector<lower = 0, upper = 1>[n] sex;    // sex
     }
     parameters {
-        real intercept;                               // intercept
-        real female;                             // coefficient of sex
+        real<lower = -256, upper = 256> intercept;    // intercept
+        real<lower = -256, upper = 256> female;       // coefficient of sex
         real<lower = 0> sigma;
     }
     model {
@@ -123,7 +128,7 @@ gc()
 
 ## No pooling model
 
-Now we break it down by program. In other words, the following produces a regression of OQdiff by sex for each program separately.
+Now we break it down by program. In other words, the following produces a regression of OQdiff by sex for each program separately. (It's not quite a complete lack of pooling. The sex coefficient is not being estimated separately for each program. This is because there are several programs that only have OQ diffs for one sex. Therefore, this model assumes that the "slope" associated with sex is constant for all programs.)
 
 Gather data to pass to Stan:
 
@@ -137,6 +142,11 @@ data_OQdiff_sex_prog <- list(y = natsap_tidy$OQdiff,
                            prog = natsap_tidy$new_ID)
 ```
 
+Mathematical model:
+
+$$ y_{i} \sim N\left( \mu_{j[i]} + \beta_{female} sex_{i}, \sigma_{j[i]} \right), 
+        \quad 1 \leq i \leq n $$
+        
 Write Stan model:
 
 ```{r}
@@ -149,7 +159,7 @@ cat("
         int prog[n];                            // program for each client
     }
     parameters {
-        real female;                              // coefficient of sex
+        real<lower = -256, upper = 256> female;  // coefficient of sex
         vector<lower = -256, upper = 256>[J] mu; // program means for males
         vector<lower = 0>[J] sigma;              // program sds
     }
@@ -247,6 +257,12 @@ data_OQdiff_sex_prog_hier <- list(y = natsap_tidy$OQdiff,
                            prog = natsap_tidy$new_ID)
 ```
 
+Mathematical model:
+
+$$ \alpha_{j} \sim N\left( \mu_{\alpha}, \sigma_{\alpha} \right), \quad 1 \leq j \leq J $$
+$$ y_{i} \sim N\left( \alpha_{j[i]} + \beta_{female} sex_{i}, \sigma_{y} \right), 
+        \quad 1 \leq i \leq n $$
+    
 Write Stan model:
 
 ```{r}
@@ -259,8 +275,8 @@ cat("
         vector<lower = 0, upper = 1>[n] sex;    // sex
     }
     parameters {
-        real mu_a;                              // prior mean on alpha (intercepts)
-        real female;                              // coefficient of sex
+        real<lower = -256, upper = 256> mu_a;   // prior mean on alpha (intercepts)
+        real<lower = -256, upper = 256> female; // coefficient of sex
         real<lower = 0> sigma_a;                // prior sd on alpha (intercepts)
         vector<lower = -256, upper = 256>[J] a; // program-level intercepts
         real<lower = 0> sigma_y;                // data-level sd

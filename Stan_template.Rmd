@@ -34,6 +34,10 @@ Gather data to pass to Stan:
 data_yourmodel <- list() ##### <----- ADD DATA HERE. #####
 ```
 
+Mathematical model:
+
+$$ \TeX{} $$
+
 Write Stan model:
 
 ```{r}
@@ -70,12 +74,14 @@ samples_yourmodel <- as.data.frame(fit_yourmodel)
 
 write_csv(samples_yourmodel, path = "./root/yourmodel.csv")
 
-params_yourmodel <- c() ##### <----- ADD PARAMETERS HERE. #####
+params_yourmodel <- c() ##### <----- ADD PARAMETERS TO PLOT. #####
 ```
 
 Show chain diagnostics and posterior summaries:
 
 ```{r, fig.width = 9, fig.height = 10}
+##### CHANGE fig.height ^^^^^ #####
+
 traceplot(fit_yourmodel, pars = params_yourmodel, inc_warmup = FALSE)
 
 print(fit_yourmodel)
