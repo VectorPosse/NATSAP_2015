@@ -52,7 +52,7 @@ data_OQdiff_sex <- list(y = natsap_tidy$OQdiff,
 
 Mathematical model:
 
-$$ y_{i} \sim N\left( \beta_{0} + \beta_{female} sex, \sigma \right), \quad
+$$ y_{i} \sim N\left( \beta_{0} + \beta_{female} sex_{i}, \sigma \right), \quad
         1 \leq i \leq n $$
 
 Write Stan model:

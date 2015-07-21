@@ -54,6 +54,12 @@ data_OQdiff_RTCWT_sex <- list(y = natsap_tidy$OQdiff,
                               sex = ifelse(natsap_tidy$sex == "MALE", 0, 1))
 ```
 
+Mathematical model:
+
+$$ y_{i} \sim N\left( \beta_{0} + \beta_{female} sex
+        + \beta_{WT} RTCWT, \sigma \right), 
+        \quad 1 \leq i \leq n $$
+
 Write Stan model:
 
 ```{r}
@@ -65,10 +71,10 @@ cat("
         vector<lower = 0, upper = 1>[n] sex;    // sex
     }
     parameters {
-        real intercept;                         // intercept
-        real female;                            // coefficient of sex
-        real WT;                               // coefficient of RTCWT
-        real<lower = 0> sigma;
+        real<lower = -256, upper = 256> intercept; // intercept
+        real<lower = -256, upper = 256> female;    // coefficient of sex
+        real<lower = -256, upper = 256> WT;        // coefficient of RTCWT
+        real<lower = 0> sigma;                     // sd
     }
     model {
         // Implicit uniform priors on intercept, female, WT, and sigma
@@ -81,7 +87,7 @@ file = "./OQdiff_RTCWT_sex/OQdiff_RTCWT_sex.stan")
 Fit Stan model:
 
 ```{r}
-final_model = TRUE
+final_model = FALSE
 
 if (file.exists("./OQdiff_RTCWT_sex/OQdiff_RTCWT_sex.rds") & final_model == TRUE) {
     stan_OQdiff_RTCWT_sex <- readRDS("./OQdiff_RTCWT_sex/OQdiff_RTCWT_sex.rds")
@@ -141,10 +147,16 @@ RTCWT <- dose_tidy$RTCWT[natsap_tidy$new_ID]
 RTCWT <- ifelse(RTCWT == "RTC", 0, 1)  # 0 = RTC, 1 = WT
 
 data_OQdiff_RTCWT_by_sex <- list(y = natsap_tidy$OQdiff,
-                              n = length(natsap_tidy$OQdiff),
-                              RTCWT = RTCWT,
-                              sex = ifelse(natsap_tidy$sex == "MALE", 0, 1))
+                                 n = length(natsap_tidy$OQdiff),
+                                 RTCWT = RTCWT,
+                                 sex = ifelse(natsap_tidy$sex == "MALE", 0, 1))
 ```
+
+Mathematical model:
+
+$$ y_{i} \sim N\left( \beta_{0} + \beta_{female} sex_{i} + \beta_{WT} RTCWT_{i} + 
+        \beta_{WT \cdot female} (RTCWT_{i} \cdot sex_{i}), \sigma \right),
+        \quad 1 \leq i \leq n $$
 
 Write Stan model:
 
@@ -157,16 +169,16 @@ cat("
         vector<lower = 0, upper = 1>[n] sex;    // sex
     }
     parameters {
-        real intercept;                         // intercept
-        real female;                            // coefficient of sex
-        real WT;                               // coefficient of RTCWT
-        real WT_female;                        // Interaction term
-        real<lower = 0> sigma;
+        real<lower = -256, upper = 256> intercept; // intercept
+        real<lower = -256, upper = 256> female;    // coefficient of sex
+        real<lower = -256, upper = 256> WT;        // coefficient of RTCWT
+        real<lower = -256, upper = 256> WT_female; // coefficient of interaction
+        real<lower = 0> sigma;                     // sd
     }
     model {
-        // Implicit uniform priors on intercept, female, WT, and sigma
-        y ~ normal(intercept + female * sex + WT * RTCWT + 
-                        WT_female * (RTCWT .* sex), sigma);
+        // Implicit uniform priors on intercept, female, WT, WT_female, and sigma
+        y ~ normal(intercept + female * sex + WT * RTCWT +
+            WT_female * (RTCWT .* sex), sigma);
     }
 ",
 file = "./OQdiff_RTCWT_sex/OQdiff_RTCWT_by_sex.stan")
@@ -175,7 +187,7 @@ file = "./OQdiff_RTCWT_sex/OQdiff_RTCWT_by_sex.stan")
 Fit Stan model:
 
 ```{r}
-final_model = TRUE
+final_model = FALSE
 
 if (file.exists("./OQdiff_RTCWT_sex/OQdiff_RTCWT_by_sex.rds") & final_model == TRUE) {
     stan_OQdiff_RTCWT_by_sex <- readRDS("./OQdiff_RTCWT_sex/OQdiff_RTCWT_by_sex.rds")
@@ -245,6 +257,13 @@ data_OQdiff_RTCWT_by_sex_hier <- list(y = natsap_tidy$OQdiff,
                                       prog = natsap_tidy$new_ID)
 ```
 
+Mathematical model:
+
+$$ \alpha_{j} \sim N\left( \mu_{\alpha}, \sigma_{\alpha} \right) $$
+$$ y_{i} \sim ~ N\left( \alpha_{j[i]} + \beta_{female} sex_{i} + 
+        \beta_{WT} RTCWT_{i} +
+        \beta_{WT \cdot female}  (RTCWT_{i} \cdot sex_{i} \right), \sigma_{y}) $$
+
 Write Stan model:
 
 ```{r}
@@ -254,17 +273,17 @@ cat("
         vector<lower = -256, upper = 256>[n] y; // OQ diffs
         vector<lower = 0, upper = 1>[n] RTCWT;  // RTC/WT
         vector<lower = 0, upper = 1>[n] sex;    // sex
-        int<lower = 1> J;                      // number of programs
+        int<lower = 1> J;                       // number of programs
         int prog[n];                            // programs
     }
     parameters {
-        real<lower = -256, upper = 256> mu_a;   // program-level mean
-        real<lower = 0> sigma_a;                // program-level sd 
-        vector<lower = -256, upper = 256>[J] a; // intercept for each program
-        real<lower = -256, upper = 256> female; // coefficient of sex
-        real<lower = -256, upper = 256> WT;     // coefficient of RTCWT
-        real<lower = -256, upper = 256> WT_female; // Interaction term
-        real<lower = 0> sigma_y;                   // Data-level sd
+        real<lower = -256, upper = 256> mu_a;      // program-level mean
+        real<lower = 0> sigma_a;                   // program-level sd 
+        vector<lower = -256, upper = 256>[J] a;    // intercept for each program
+        real<lower = -256, upper = 256> female;    // coefficient of sex
+        real<lower = -256, upper = 256> WT;        // coefficient of RTCWT
+        real<lower = -256, upper = 256> WT_female; // coefficient of interaction
+        real<lower = 0> sigma_y;                   // data-level sd
     }
     model {
         // Implicit uniform priors on intercept, female, WT, and sigma
@@ -281,7 +300,7 @@ file = "./OQdiff_RTCWT_sex/OQdiff_RTCWT_by_sex_hier.stan")
 Fit Stan model:
 
 ```{r}
-final_model = TRUE
+final_model = FALSE
 
 if (file.exists("./OQdiff_RTCWT_sex/OQdiff_RTCWT_by_sex_hier.rds") & final_model == TRUE) {
     stan_OQdiff_RTCWT_by_sex_hier <- readRDS("./OQdiff_RTCWT_sex/OQdiff_RTCWT_by_sex_hier.rds")
@@ -343,6 +362,151 @@ cleanup("OQdiff_RTCWT_by_sex_hier")
 rm(final_model, len, RTCWT, some_programs, alphas)
 gc()
 ```
+
+## RTCWT as a group level predictor
+
+Rather than having RTCWT (and its interaction with sex) in the data-level model, it makes more sense to think of this as a group-level predictor. To capture the interaction between RTCWT and sex, we'll need to use a varying-intercept/varying-slope model. Unfortunately, there are programs for which we don't have data for both sexes.
+
+Gather data to pass to Stan:
+
+```{r}
+# model name is 'OQdiff_RTCWT_by_sex_hier2'
+
+data_OQdiff_RTCWT_by_sex_hier2 <- list(y = natsap_tidy$OQdiff,
+                                    n = length(natsap_tidy$OQdiff),
+                                    RTCWT = ifelse(dose_tidy$RTCWT == "RTC", 0, 1),
+                                        # 0 = RTC, 1 = WT
+                                    sex = ifelse(natsap_tidy$sex == "MALE", 0, 1),
+                                    J = NROW(dose_tidy),
+                                    prog = natsap_tidy$new_ID)
+```
+
+Mathematical model:
+
+$$ \alpha_{j} \sim N\left( \gamma^{\alpha}_{0} + \gamma^{\alpha}_{1} RTCWT_{j},
+        \sigma_{\alpha} \right), \quad 1 \leq j \leq J $$
+$$ \beta_{j} \sim N\left( \gamma^{\beta}_{0} + \gamma^{\beta}_{1} RTCWT_{j},
+        \sigma_{\beta} \right), \quad 1 \leq j \leq J $$
+$$ y_{i} \sim N\left( \alpha_{j[i]} + \beta_{j[i]} sex_{i},
+        \sigma_{y} \right), \quad 1 \leq i \leq n $$
+
+Write Stan model:
+
+```{r}
+cat("
+    data {
+        int<lower = 1> n;                       // clients
+        int<lower = 1> J;                       // number of programs
+        vector<lower = -256, upper = 256>[n] y; // OQ diffs
+        vector<lower = 0, upper = 1>[J] RTCWT;  // RTC/WT
+        vector<lower = 0, upper = 1>[n] sex;    // sex
+        int prog[n];                            // programs
+    }
+    parameters {
+        vector<lower = -256, upper = 256>[J] a;    // program-level intercepts
+        real<lower = -256, upper = 256> g_a_int;   // program-level intercept
+        real<lower = -256, upper = 256> g_a_slope; // coefficient of RTCWT
+        real<lower = 0> sigma_a;                   // program-level sd
+        vector<lower = -256, upper = 256>[J] b;    // program-level slopes
+        real<lower = -256, upper = 256> g_b_int;   // coefficient of sex
+        real<lower = -256, upper = 256> g_b_slope; // coefficient of interaction
+        real<lower = 0> sigma_b;                   // program-level sd 
+        real<lower = 0> sigma_y;                   // data-level sd
+    }
+    model {
+        // Implicit uniform priors on g_a_int, g_a_slope, sigma_a,
+        // g_b_int, g_b_slope, sigma_b,
+        a ~ normal(g_a_int + g_a_slope * RTCWT, sigma_a);
+        b ~ normal(g_b_int + g_b_slope * RTCWT, sigma_a);
+        for (i in 1:n) {
+            y[i] ~ normal(a[prog[i]] + b[prog[i]] * sex[i], sigma_y);
+        }
+    }
+",
+file = "./OQdiff_RTCWT_sex/OQdiff_RTCWT_by_sex_hier2.stan")
+```
+
+Fit Stan model:
+
+```{r}
+final_model = FALSE ##### <----- CHANGE TO TRUE ONCE THE MODEL WORKS. #####
+
+if (file.exists("./OQdiff_RTCWT_sex/OQdiff_RTCWT_by_sex_hier2.rds") & final_model == TRUE) {
+    stan_OQdiff_RTCWT_by_sex_hier2 <- readRDS("./OQdiff_RTCWT_sex/OQdiff_RTCWT_by_sex_hier2.rds")
+} else {
+    stan_OQdiff_RTCWT_by_sex_hier2 <- stan_model("./OQdiff_RTCWT_sex/OQdiff_RTCWT_by_sex_hier2.stan")
+    saveRDS(stan_OQdiff_RTCWT_by_sex_hier2, file = "./OQdiff_RTCWT_sex/OQdiff_RTCWT_by_sex_hier2.rds")
+}
+
+fit_OQdiff_RTCWT_by_sex_hier2 <- sampling(stan_OQdiff_RTCWT_by_sex_hier2, data = data_OQdiff_RTCWT_by_sex_hier2)
+```
+
+Extract and save samples:
+
+```{r}
+samples_OQdiff_RTCWT_by_sex_hier2 <- as.data.frame(fit_OQdiff_RTCWT_by_sex_hier2)
+
+write_csv(samples_OQdiff_RTCWT_by_sex_hier2, path = "./OQdiff_RTCWT_sex/OQdiff_RTCWT_by_sex_hier2.csv")
+
+# Get 4 random programs
+set.seed(1234)
+some_programs <- sort(sample(1:data_OQdiff_RTCWT_by_sex_hier2$J, 4))
+
+# Display sample sizes for selected programs.
+cat("Sample sizes for programs", some_programs, ": ",
+    dose_tidy[dose_tidy$new_ID %in% some_programs,"n"])
+
+# Gather up parameter names
+alphas <- some_programs %>%
+    as.character() %>%
+    sapply(function(x) {paste("a[", x, "]", sep = "")}) %>%
+    unname()
+
+betas <- some_programs %>%
+    as.character() %>%
+    sapply(function(x) {paste("b[", x, "]", sep = "")}) %>%
+    unname()
+
+params_OQdiff_RTCWT_by_sex_hier2_alphas <- c("g_a_int", "g_a_slope", "sigma_a", alphas)
+params_OQdiff_RTCWT_by_sex_hier2_betas <- c("g_b_int", "g_b_slope", betas)
+```
+
+Show chain diagnostics and posterior summaries:
+
+```{r, fig.width = 9, fig.height = 10}
+##### CHANGE fig.height ^^^^^ #####
+
+traceplot(fit_OQdiff_RTCWT_by_sex_hier2, pars = params_OQdiff_RTCWT_by_sex_hier2_alphas, inc_warmup = FALSE)
+traceplot(fit_OQdiff_RTCWT_by_sex_hier2, pars = params_OQdiff_RTCWT_by_sex_hier2_betas, inc_warmup = FALSE)
+
+print(fit_OQdiff_RTCWT_by_sex_hier2)
+
+len <- length(params_OQdiff_RTCWT_by_sex_hier2_alphas)
+sample_plots(samples_OQdiff_RTCWT_by_sex_hier2,
+             params = params_OQdiff_RTCWT_by_sex_hier2_alphas,
+             cred_mass = 0.95,
+             layout = matrix(c(1:(len + len %% 2)),
+                             nrow = (len + len %% 2)/2,
+                             ncol = 2, byrow = TRUE))
+
+len <- length(params_OQdiff_RTCWT_by_sex_hier2_betas)
+sample_plots(samples_OQdiff_RTCWT_by_sex_hier2,
+             params = params_OQdiff_RTCWT_by_sex_hier2_betas,
+             cred_mass = 0.95,
+             layout = matrix(c(1:(len + len %% 2)),
+                             nrow = (len + len %% 2)/2,
+                             ncol = 2, byrow = TRUE))
+```
+
+Clean up workspace:
+
+```{r, results = 'hide'}
+cleanup("OQdiff_RTCWT_by_sex_hier2")
+rm(final_model, len, some_programs, alphas, betas, params_OQdiff_RTCWT_by_sex_hier2_alphas, params_OQdiff_RTCWT_by_sex_hier2_betas) 
+gc()
+```
+
+
 
 ```{r}
 beep()

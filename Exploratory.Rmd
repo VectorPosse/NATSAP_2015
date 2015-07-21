@@ -17,132 +17,11 @@ library(dplyr)
 library(ggplot2)
 library(knitr)
 library(readr)
+library(tidyr)
 ```
 
 ```{r}
 source("stan_utilities.R")
-
-## The file stan_utilities.R contains the following functions:
-
-########################################
-
-## cleanup
-
-## Cleans up the objects left over after fitting a Stan model:
-##      data_model:     The data list passed to stan.
-##      fit_model:      The stanfit object output.
-##      samples_model:  The samples as a data frame.
-##      params_model:   The parameters to track for plotting.
-## Returns nothing.
-
-## cleanup(model)
-
-# model:                Root name of the Stan model as character string.
-
-########################################
-
-## HDI_calc
-
-## Calculates HDI and prepares graphical parameters to pass to ggplot.
-## Returns a list of three objects:
-##      breaks:     The breaks to use for the histogram.
-##      line_pos:   Parameters for plotting the HDI line segments.
-##      text_pos:   Parameters for plotting the text annotations.
-
-## HDI_calc(sample, cred_mass = 0.95, digits = 2)
-
-# sample:           A vector of representative values from a probability distribution.
-# cred_mass:        A scalar between 0 and 1, indicating the mass within the credible
-#                       interval that is to be estimated.
-# digits:           The number of decimal places when displaying the HDI.
-
-########################################
-
-## HDIofMCMC (John Kruschke)
-
-## Computes highest density interval from a sample of representative values,
-##      estimated as shortest credible interval.
-
-## HDIofMCMC(sampleVec , cred_mass = 0.95)
-
-# sampleVec:        A vector of representative values from a probability distribution.
-# cred_mass:        A scalar between 0 and 1, indicating the mass within the credible
-#                       interval that is to be estimated.
-
-########################################
-
-## multiplot (winston Chang)
-
-## Places ggplot objects in a grid.
-## Returns nothing, but displays desired graphics.
-
-## multiplot(..., plotlist=NULL, file, cols=1, layout=NULL)
-
-# ...               One can pass ggplot objects directly.
-#                           (But it's easier to pass them as a plotlist.)
-# plotlist:         A list of ggplot objects.
-# cols:             Number of columns in layout.
-#                       If layout is not specified, multiplot will calculate
-#                       how many rows to create using cols.
-# layout:           A layout matrix.
-#                       For example:
-#                           matrix(c(1,2,3,3), nrow=2, byrow=TRUE)
-#                       Plot 1 will go in the upper left,
-#                       plot 2 will go in the upper right, and
-#                       plot 3 will go all the way across the bottom.
-#                       If present, cols is ignored.
-
-########################################
-
-## params_per_program
-
-## Takes a list of sampled parameters for a collection of programs and refactors
-## it so that each row is a program and the columns contain summaries of the
-## parameters that correspond to that program.
-## Returns a data frame.
-
-## params_per_program(df)
-
-# df:               A data frame of MCMC samples. For this to work, program-level
-#                   parameters should be of the form 'param[#]' where # is the
-#                   corresponding program new_ID.
-
-########################################
-
-## param_plot
-
-## Plots a sampled parameter along with HDI.
-## Returns a ggplot object.
-
-## param_plot(sample, param, cred_mass = 0.95)
-
-# sample:           A vector of representative values from a probability distribution.
-# param:            A string with the name of the parameters to be plotted.
-# cred_mass:        A scalar between 0 and 1, indicating the mass within the credible
-#                       interval that is to be estimated.
-
-########################################
-
-## sample_plots
-
-## Creates a grid of histograms of sampled parameters with HDIs.
-## Returns nothing, but displays the result of multiplot.
-
-## sample_plots(samples, params, cred_mass = 0.95, layout = NULL)
-
-# samples:          A data frame extracted from a stanfit object.
-# params:           A character vector of parameters to be plotted.
-# cred_mass:        A scalar between 0 and 1, indicating the mass within the credible
-#                       interval that is to be estimated.
-# layout:           A layout matrix.
-#                       For example:
-#                           matrix(c(1,2,3,3), nrow=2, byrow=TRUE)
-#                       Plot 1 will go in the upper left,
-#                       plot 2 will go in the upper right, and
-#                       plot 3 will go all the way across the bottom.
-#                       If present, cols is ignored.
-
-########################################
 ```
 
 ## Read and process data
@@ -215,12 +94,19 @@ natsap_tidy <- semi_join(natsap_sub, dose_sub, by = "ID")
 dose_tidy <- semi_join(dose_sub, natsap_sub, by = "ID")
 
 
-## Get sample sizes for each program and keep only programs with more than two 
-## matched pairs
+## Get sample sizes for each program (for each sex) and keep only programs with
+## more than two matched pairs.
 
 sample_size <- natsap_tidy %>%
-    group_by(ID) %>%
-    summarise(n = n())
+    group_by(ID, sex) %>%
+    summarize(n = n()) %>%
+    spread(sex, n) %>%
+    rename(n_female = FEMALE, n_male = MALE) %>%
+    replace(is.na(.), 0) %>%
+    mutate(n = n_female + n_male,
+           coed = (ifelse(n_female == 0, "Male only",
+                          ifelse(n_male == 0, "Female only", "Coed"))))
+            # NOTE: The 'coed' variable is not necessarily how the program is structured;             # it's only about the availability of data for both sexes.
 
 dose_tidy <- dose_tidy %>%
     inner_join(sample_size, by = "ID") %>%
@@ -258,16 +144,49 @@ natsap_tidy <- natsap_tidy %>%
 
 write_csv(dose_tidy, path = "./tidydata/dose_tidy_1.csv")
 write_csv(natsap_tidy, path = "./tidydata/natsap_tidy_1.csv")
-
-
-## Clean up environment
- 
-rm(natsap, dose, natsap_sub, dose_sub, ID_check, ID_check_dose, ID_check_natsap, J, new_ID, lookup, sample_size)
 ```
+
 
 ## Exploratory data analysis
 
-[to do]
+### RTC vs WT
+
+```{r}
+OQ_explore <- natsap_tidy %>%
+    inner_join(dose_tidy, by = "new_ID")
+
+OQ_summary <- OQ_explore %>%
+    group_by(RTCWT, sex) %>%
+    summarize(median(OQ_A), median(OQ_D), median(OQdiff))
+OQ_summary
+
+OQ_stats <- OQ_explore %>%
+    gather(AD, OQ, OQ_A, OQ_D)
+levels(OQ_stats$AD)[levels(OQ_stats$AD) == "OQ_A"] <- "Admission OQ"
+levels(OQ_stats$AD)[levels(OQ_stats$AD) == "OQ_D"] <- "Discharge OQ"
+
+plot_OQ_AD <- ggplot(OQ_stats, aes(x = RTCWT, y = OQ, fill = sex)) +
+    geom_boxplot() +
+    facet_grid(. ~ AD) +
+    xlab("") +
+    scale_fill_discrete(name = "Sex") +
+    theme(strip.text.x = element_text(size = 16))
+plot_OQ_AD
+
+plot_OQ_diff <- ggplot(OQ_stats, aes(x = RTCWT, y = OQdiff, fill = sex)) +
+    geom_boxplot() +
+    xlab("") +
+    ylab("OQ difference") +
+    scale_fill_discrete(name = "Sex") +
+    theme(axis.title.y = element_text(size = 16))
+plot_OQ_diff
+```
+
+Clean up workspace:
+
+```{r}
+rm(natsap, dose, natsap_sub, dose_sub, ID_check, ID_check_dose, ID_check_natsap, J, new_ID, lookup, sample_size, OQ_explore, OQ_stats, OQ_summary, plot_OQ_AD, plot_OQ_diff)
+```
 
 ```{r}
 beep()
