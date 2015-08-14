@@ -5,7 +5,7 @@ date: "July 8, 2015"
 output: html_document
 ---
 
-In this document, we clean the data and store it for use in other models. Then we do some basic exploratory data analysis to get to know the data better.
+In this document, we do some basic exploratory data analysis to get to know the data better.
 
 ## Housekeeping
 
@@ -24,132 +24,14 @@ library(tidyr)
 source("stan_utilities.R")
 ```
 
-## Read and process data
-
-Load data.
+## Import data
 
 ```{r}
-natsap <- read_csv("./data/AllClients_rev3.csv")
-dose <- read_csv("./data/DoseData_07-08-2015.csv")
+natsap_tidy <- read_csv("./tidydata/natsap_tidy.csv")
+dose_tidy <- read_csv("./tidydata/dose_tidy.csv")
 ```
 
-Clean data and write to the `tidydata` folder.
-
-```{r}
-
-## Subset data
-
-natsap_sub <- natsap %>%
-    select(sex = gender,
-           ID = programId,
-           company = company,
-           OQ_A = Z1_A0_Self_SCORE,
-           OQ_D = Z1_D0_Self_SCORE)
-
-dose_sub <- dose %>%
-    select(company = company,
-           ID = NATSAP_ID,
-           RTCWT = `RTC or WT`,
-           IT = `Mode minutes of Inidividual Therapy per week`,
-           # IT_freq = `Frequency of IT per week`,
-           GT = `Mode minutes of Group Therapy per week`,
-           # GT_freq = `Frequency of GT week`,
-           RFT = `Mode minutes  of Remote Family Therapy per week`)
-           # RFT_freq = `Frequency of RFT per week`)
-
-
-## Check to make sure program IDs are coded correctly.
-
-ID_check_natsap <- natsap_sub %>%
-    distinct(ID) %>%
-    select(company, ID)
-ID_check_dose <- dose_sub %>%
-    distinct(ID) %>%
-    select(company, ID)
-
-ID_check <- inner_join(ID_check_dose, ID_check_natsap, by = "ID")
-as.data.frame(ID_check)
-
-
-## Get complete cases
-
-natsap_sub <- natsap_sub %>%
-    na.omit() %>%
-    filter(sex != "")
-dose_sub <- dose_sub %>%
-    na.omit()
-
-
-## Validity check:
-## OQ scores have to be between -16 and 240.
-
-natsap_sub <- natsap_sub %>%
-    filter(OQ_A >= -16 & OQ_A <= 240 & OQ_D >= -16 & OQ_D <= 240)
-
-
-## Join IDs so our tidy data sets will contain only
-## programs for which we have dose data and matched pairs.
-
-natsap_tidy <- semi_join(natsap_sub, dose_sub, by = "ID")
-dose_tidy <- semi_join(dose_sub, natsap_sub, by = "ID")
-
-
-## Get sample sizes for each program (for each sex) and keep only programs with
-## more than two matched pairs.
-
-sample_size <- natsap_tidy %>%
-    group_by(ID, sex) %>%
-    summarize(n = n()) %>%
-    spread(sex, n) %>%
-    rename(n_female = FEMALE, n_male = MALE) %>%
-    replace(is.na(.), 0) %>%
-    mutate(n = n_female + n_male,
-           coed = (ifelse(n_female == 0, "Male only",
-                          ifelse(n_male == 0, "Female only", "Coed"))))
-            # NOTE: The 'coed' variable is not necessarily how the program is structured;             # it's only about the availability of data for both sexes.
-
-dose_tidy <- dose_tidy %>%
-    inner_join(sample_size, by = "ID") %>%
-    filter(n > 2)
-
-natsap_tidy <- natsap_tidy %>%
-    semi_join(dose_tidy, by = "ID")
-
-
-## Make OQdiff variable
-
-natsap_tidy <- natsap_tidy %>%
-    mutate(OQdiff = OQ_A - OQ_D) # Positive scores represent improvement
-
-
-## Give programs new random ID, consecutively numbered
-
-J <- NROW(dose_tidy)
-set.seed(1234)
-new_ID <- sample(1:J, J)
-
-dose_tidy <- dose_tidy %>%
-    cbind(new_ID) %>%
-    arrange(new_ID)
-
-lookup <- dose_tidy %>%
-    select(ID, new_ID)
-
-natsap_tidy <- natsap_tidy %>%
-    inner_join(lookup, by = "ID") %>%
-    arrange(new_ID)
-
-
-## Write tidy data sets to csv for convenience
-
-write_csv(dose_tidy, path = "./tidydata/dose_tidy_1.csv")
-write_csv(natsap_tidy, path = "./tidydata/natsap_tidy_1.csv")
-```
-
-
-## Exploratory data analysis
-
-### RTC vs WT
+## RTC vs WT
 
 ```{r}
 OQ_explore <- natsap_tidy %>%
@@ -185,7 +67,7 @@ plot_OQ_diff
 Clean up workspace:
 
 ```{r}
-rm(natsap, dose, natsap_sub, dose_sub, ID_check, ID_check_dose, ID_check_natsap, J, new_ID, lookup, sample_size, OQ_explore, OQ_stats, OQ_summary, plot_OQ_AD, plot_OQ_diff)
+rm(OQ_explore, OQ_stats, OQ_summary, plot_OQ_AD, plot_OQ_diff)
 ```
 
 ```{r}

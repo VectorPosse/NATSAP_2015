@@ -31,8 +31,8 @@ source("stan_utilities.R")
 ## Import data
 
 ```{r}
-natsap_tidy <- read_csv("./tidydata/natsap_tidy_1.csv")
-dose_tidy <- read.csv("./tidydata/dose_tidy_1.csv")
+natsap_tidy <- read_csv("./tidydata/natsap_tidy.csv")
+dose_tidy <- read_csv("./tidydata/dose_tidy.csv")
 ```
 
 
@@ -201,7 +201,7 @@ some_programs <- sort(sample(1:data_OQdiff_sex_prog$J, 4))
 
 # Display sample sizes for selected programs.
 cat("Sample sizes for programs", some_programs, ": ",
-    dose_tidy[dose_tidy$new_ID %in% some_programs,"n"])
+    dose_tidy$n[dose_tidy$new_ID %in% some_programs])
 
 # Gather up parameter names
 mus <- some_programs %>%
@@ -321,7 +321,7 @@ some_programs <- sort(sample(1:data_OQdiff_sex_prog_hier$J, 4))
 
 # Display sample sizes for selected programs.
 cat("Sample sizes for programs", some_programs, ": ",
-    dose_tidy[dose_tidy$new_ID %in% some_programs,"n"])
+    dose_tidy$n[dose_tidy$new_ID %in% some_programs])
 
 # Gather up parameter names
 alphas <- some_programs %>%

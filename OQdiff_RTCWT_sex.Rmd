@@ -31,8 +31,8 @@ source("stan_utilities.R")
 ## Import data
 
 ```{r}
-natsap_tidy <- read_csv("./tidydata/natsap_tidy_1.csv")
-dose_tidy <- read.csv("./tidydata/dose_tidy_1.csv")
+natsap_tidy <- read_csv("./tidydata/natsap_tidy.csv")
+dose_tidy <- read_csv("./tidydata/dose_tidy.csv")
 ```
 
 
@@ -87,7 +87,7 @@ file = "./OQdiff_RTCWT_sex/OQdiff_RTCWT_sex.stan")
 Fit Stan model:
 
 ```{r}
-final_model = FALSE
+final_model = TRUE
 
 if (file.exists("./OQdiff_RTCWT_sex/OQdiff_RTCWT_sex.rds") & final_model == TRUE) {
     stan_OQdiff_RTCWT_sex <- readRDS("./OQdiff_RTCWT_sex/OQdiff_RTCWT_sex.rds")
@@ -187,7 +187,7 @@ file = "./OQdiff_RTCWT_sex/OQdiff_RTCWT_by_sex.stan")
 Fit Stan model:
 
 ```{r}
-final_model = FALSE
+final_model = TRUE
 
 if (file.exists("./OQdiff_RTCWT_sex/OQdiff_RTCWT_by_sex.rds") & final_model == TRUE) {
     stan_OQdiff_RTCWT_by_sex <- readRDS("./OQdiff_RTCWT_sex/OQdiff_RTCWT_by_sex.rds")
@@ -300,7 +300,7 @@ file = "./OQdiff_RTCWT_sex/OQdiff_RTCWT_by_sex_hier.stan")
 Fit Stan model:
 
 ```{r}
-final_model = FALSE
+final_model = TRUE
 
 if (file.exists("./OQdiff_RTCWT_sex/OQdiff_RTCWT_by_sex_hier.rds") & final_model == TRUE) {
     stan_OQdiff_RTCWT_by_sex_hier <- readRDS("./OQdiff_RTCWT_sex/OQdiff_RTCWT_by_sex_hier.rds")
@@ -325,7 +325,7 @@ some_programs <- sort(sample(1:data_OQdiff_RTCWT_by_sex_hier$J, 5))
 
 # Display sample sizes for selected programs.
 cat("Sample sizes for programs", some_programs, ": ",
-    dose_tidy[dose_tidy$new_ID %in% some_programs,"n"])
+    dose_tidy$n[dose_tidy$new_ID %in% some_programs])
 
 # Gather up parameter names
 alphas <- some_programs %>%
@@ -365,7 +365,7 @@ gc()
 
 ## RTCWT as a group level predictor
 
-Rather than having RTCWT (and its interaction with sex) in the data-level model, it makes more sense to think of this as a group-level predictor. To capture the interaction between RTCWT and sex, we'll need to use a varying-intercept/varying-slope model. Unfortunately, there are programs for which we don't have data for both sexes.
+Rather than having RTCWT (and its interaction with sex) in the data-level model, it makes more sense to think of this as a group-level predictor. To capture the interaction between RTCWT and sex, we'll need to use a varying-intercept/varying-slope model. Unfortunately, there are programs for which we don't have data for both sexes. One way ti fix this is to include an indicator variable that is 0 for single-sex programs and 1 for coed programs. This will have the effect of removing the `sex` predictor (and therefore removing the need to estimate the slope) for programs that are not coed.
 
 Gather data to pass to Stan:
 
@@ -378,7 +378,8 @@ data_OQdiff_RTCWT_by_sex_hier2 <- list(y = natsap_tidy$OQdiff,
                                         # 0 = RTC, 1 = WT
                                     sex = ifelse(natsap_tidy$sex == "MALE", 0, 1),
                                     J = NROW(dose_tidy),
-                                    prog = natsap_tidy$new_ID)
+                                    prog = natsap_tidy$new_ID,
+                                    coed = ifelse(dose_tidy$coed == "Coed", 1, 0))
 ```
 
 Mathematical model:
@@ -387,7 +388,7 @@ $$ \alpha_{j} \sim N\left( \gamma^{\alpha}_{0} + \gamma^{\alpha}_{1} RTCWT_{j},
         \sigma_{\alpha} \right), \quad 1 \leq j \leq J $$
 $$ \beta_{j} \sim N\left( \gamma^{\beta}_{0} + \gamma^{\beta}_{1} RTCWT_{j},
         \sigma_{\beta} \right), \quad 1 \leq j \leq J $$
-$$ y_{i} \sim N\left( \alpha_{j[i]} + \beta_{j[i]} sex_{i},
+$$ y_{i} \sim N\left( \alpha_{j[i]} + \beta_{j[i]} * coed * sex_{i},
         \sigma_{y} \right), \quad 1 \leq i \leq n $$
 
 Write Stan model:
@@ -401,6 +402,7 @@ cat("
         vector<lower = 0, upper = 1>[J] RTCWT;  // RTC/WT
         vector<lower = 0, upper = 1>[n] sex;    // sex
         int prog[n];                            // programs
+        real coed[J];                            // coed or not
     }
     parameters {
         vector<lower = -256, upper = 256>[J] a;    // program-level intercepts
@@ -417,9 +419,13 @@ cat("
         // Implicit uniform priors on g_a_int, g_a_slope, sigma_a,
         // g_b_int, g_b_slope, sigma_b,
         a ~ normal(g_a_int + g_a_slope * RTCWT, sigma_a);
-        b ~ normal(g_b_int + g_b_slope * RTCWT, sigma_a);
+        for (j in 1:J) {
+            if (coed[j] == 1) {
+                b[j] ~ normal(g_b_int + g_b_slope * RTCWT[j], sigma_b);
+            }
+        }
         for (i in 1:n) {
-            y[i] ~ normal(a[prog[i]] + b[prog[i]] * sex[i], sigma_y);
+            y[i] ~ normal(a[prog[i]] + b[prog[i]] * coed[prog[i]] *sex[i], sigma_y);
         }
     }
 ",
@@ -429,7 +435,7 @@ file = "./OQdiff_RTCWT_sex/OQdiff_RTCWT_by_sex_hier2.stan")
 Fit Stan model:
 
 ```{r}
-final_model = FALSE ##### <----- CHANGE TO TRUE ONCE THE MODEL WORKS. #####
+final_model = TRUE ##### <----- CHANGE TO TRUE ONCE THE MODEL WORKS. #####
 
 if (file.exists("./OQdiff_RTCWT_sex/OQdiff_RTCWT_by_sex_hier2.rds") & final_model == TRUE) {
     stan_OQdiff_RTCWT_by_sex_hier2 <- readRDS("./OQdiff_RTCWT_sex/OQdiff_RTCWT_by_sex_hier2.rds")
@@ -454,7 +460,7 @@ some_programs <- sort(sample(1:data_OQdiff_RTCWT_by_sex_hier2$J, 4))
 
 # Display sample sizes for selected programs.
 cat("Sample sizes for programs", some_programs, ": ",
-    dose_tidy[dose_tidy$new_ID %in% some_programs,"n"])
+    dose_tidy$n[dose_tidy$new_ID %in% some_programs])
 
 # Gather up parameter names
 alphas <- some_programs %>%

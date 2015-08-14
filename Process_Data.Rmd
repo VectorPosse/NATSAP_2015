@@ -1,0 +1,170 @@
+---
+title: "NATSAP- Process Data"
+author: "Sean Raleigh"
+date: "July 8, 2015"
+output: html_document
+---
+
+In this document, we clean the data and store it for use in other models.
+
+## Housekeeping
+
+Load necessary libraries and special functions.
+
+```{r, message = FALSE}
+library(beepr)
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(readr)
+library(tidyr)
+```
+
+```{r}
+source("stan_utilities.R")
+```
+
+## Read and process data
+
+Load data.
+
+```{r}
+natsap <- read.csv("./data/AllClients_rev3.csv")
+dose <- read.csv("./data/DoseData_07-31-2015.csv")
+```
+
+Clean data and write to the `tidydata` folder.
+
+```{r}
+
+## Subset data
+
+natsap_sub <- natsap %>%
+    select(sex = gender,
+           ID = programId,
+           company = company,
+           OQ_A = Z1_A0_Self_SCORE,
+           OQ_D = Z1_D0_Self_SCORE)
+
+dose_sub <- dose %>%
+    select(company = company,
+           coed = student_sex,
+           ID = natsap_id,
+           RTCWT = rtc_wt,
+           IT = mode_it_mins_week,
+           # IT_freq = `Frequency of IT per week`,
+           GT = mode_gt_mins_week,
+           # GT_freq = `Frequency of GT week`,
+           RFT = mode_rft_mins_week)
+           # RFT_freq = `Frequency of RFT per week`)
+
+
+## Check to make sure program IDs are coded correctly.
+## (Visually inspect output to see that the programs match up.)
+
+ID_check_natsap <- natsap_sub %>%
+    distinct(ID) %>%
+    select(company, ID)
+ID_check_dose <- dose_sub %>%
+    distinct(ID) %>%
+    select(company, ID)
+
+ID_check <- inner_join(ID_check_dose, ID_check_natsap, by = "ID")
+as.data.frame(ID_check)
+
+
+## Get complete cases
+
+natsap_sub <- natsap_sub %>%
+    na.omit() %>%
+    filter(sex != "")
+dose_sub <- dose_sub %>%
+    na.omit()
+
+
+## Validity check:
+## OQ scores have to be between -16 and 240.
+
+natsap_sub <- natsap_sub %>%
+    filter(OQ_A >= -16 & OQ_A <= 240 & OQ_D >= -16 & OQ_D <= 240)
+
+
+## Join IDs so our tidy data sets will contain only
+## programs for which we have dose data and matched pairs.
+
+natsap_tidy <- semi_join(natsap_sub, dose_sub, by = "ID")
+dose_tidy <- semi_join(dose_sub, natsap_sub, by = "ID")
+
+
+## Get sample sizes for each program (for each sex) and keep only programs with
+## more than two matched pairs.
+
+sample_size <- natsap_tidy %>%
+    group_by(ID, sex) %>%
+    summarize(n = n()) %>%
+    spread(sex, n) %>%
+    rename(n_female = FEMALE, n_male = MALE) %>%
+    replace(is.na(.), 0) %>%
+    mutate(n = n_female + n_male)
+           
+dose_tidy <- dose_tidy %>%
+    inner_join(sample_size, by = "ID") %>%
+    filter(n > 2)
+
+natsap_tidy <- natsap_tidy %>%
+    semi_join(dose_tidy, by = "ID")
+
+## Check that sex is coded correctly for individuals in "male only" and "female only" programs.
+
+check_sex <- dose_tidy %>%
+    select(ID, coed, n_female, n_male) %>%
+    mutate(check = ifelse((coed == "male only" & n_female > 0) |
+                         (coed == "female only" & n_male > 0),
+                         FALSE, TRUE),
+           correct_sex = ifelse((coed == "male only" & n_female > 0), "MALE", "FEMALE")) %>%
+    filter(check == FALSE)
+
+for (i in check_sex$ID) {
+    correct_sex <- check_sex$correct_sex[check_sex$ID == i]
+    #### LEFT OFF HERE ####
+}
+
+## Make OQdiff variable
+
+natsap_tidy <- natsap_tidy %>%
+    mutate(OQdiff = OQ_A - OQ_D) # Positive scores represent improvement
+
+
+## Give programs new random ID, consecutively numbered
+
+J <- NROW(dose_tidy)
+set.seed(1234)
+new_ID <- sample(1:J, J)
+
+dose_tidy <- dose_tidy %>%
+    cbind(new_ID) %>%
+    arrange(new_ID)
+
+lookup <- dose_tidy %>%
+    select(ID, new_ID)
+
+natsap_tidy <- natsap_tidy %>%
+    inner_join(lookup, by = "ID") %>%
+    arrange(new_ID)
+
+
+## Write tidy data sets to csv for convenience
+
+write_csv(dose_tidy, path = "./tidydata/dose_tidy.csv")
+write_csv(natsap_tidy, path = "./tidydata/natsap_tidy.csv")
+```
+
+Clean up workspace:
+
+```{r}
+rm(natsap, dose, natsap_sub, dose_sub, ID_check, ID_check_dose, ID_check_natsap, J, new_ID, lookup, sample_size, check_sex, correct_sex, i)
+```
+
+```{r}
+beep()
+```

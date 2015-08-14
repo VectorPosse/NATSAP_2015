@@ -143,10 +143,10 @@ cleanup <- function(model) {
 HDI_calc <- function(sample, cred_mass = 0.95, digits = 2) {
     # Get the breaks the way the hist function does.
     breaks <- pretty(range(sample),
-                     n = nclass.Sturges(sample),
+                     n = nclass.scott(sample),
                      min.n = 1)
     # Get histogram output to calculate tallest bar
-    h <- hist(sample, plot = FALSE)
+    h <- hist(sample, breaks = "Scott", plot = FALSE)
     top <- max(h$counts)
 
 
