@@ -1,7 +1,7 @@
 ---
 title: "NATSAP- Process Data"
 author: "Sean Raleigh"
-date: "July 8, 2015"
+date: "August 19, 2015"
 output: html_document
 ---
 
@@ -30,7 +30,7 @@ Load data.
 
 ```{r}
 natsap <- read.csv("./data/AllClients_rev3.csv")
-dose <- read.csv("./data/DoseData_07-31-2015.csv")
+dose <- read.csv("./data/DoseData_08-19-2015.csv")
 ```
 
 Clean data and write to the `tidydata` folder.
@@ -44,7 +44,20 @@ natsap_sub <- natsap %>%
            ID = programId,
            company = company,
            OQ_A = Z1_A0_Self_SCORE,
-           OQ_D = Z1_D0_Self_SCORE)
+           OQ_A_int_dis = Z1_A0_Self_SS1,
+           OQ_A_som = Z1_A0_Self_SS2,
+           OQ_A_int_rel = Z1_A0_Self_SS3,
+           OQ_A_soc_prob = Z1_A0_Self_SS4,
+           OQ_A_beh_dys = Z1_A0_Self_SS5,
+           OQ_A_crit_it = Z1_A0_Self_SS6,
+           OQ_D = Z1_D0_Self_SCORE,
+           OQ_D_int_dis = Z1_D0_Self_SS1,
+           OQ_D_som = Z1_D0_Self_SS2,
+           OQ_D_int_rel = Z1_D0_Self_SS3,
+           OQ_D_soc_prob = Z1_D0_Self_SS4,
+           OQ_D_beh_dys = Z1_D0_Self_SS5,
+           OQ_D_crit_it = Z1_D0_Self_SS6,
+           diag = SA_A0_Guardian2_Q4)
 
 dose_sub <- dose %>%
     select(company = company,
@@ -52,11 +65,15 @@ dose_sub <- dose %>%
            ID = natsap_id,
            RTCWT = rtc_wt,
            IT = mode_it_mins_week,
-           # IT_freq = `Frequency of IT per week`,
+           IT_freq = freq_it_week,
            GT = mode_gt_mins_week,
-           # GT_freq = `Frequency of GT week`,
-           RFT = mode_rft_mins_week)
-           # RFT_freq = `Frequency of RFT per week`)
+           GT_freq = freq_gt_week,
+           RFT = mode_rft_mins_week,
+           RFT_freq = freq_rft_week,
+           IPFT = mode_ipft_mins_month,
+           IPFT_freq = freq_ipft_month,
+           PA = mode_pa_mins_week,
+           school = mode_school_mins_week)
 
 
 ## Check to make sure program IDs are coded correctly.
@@ -83,11 +100,36 @@ dose_sub <- dose_sub %>%
 
 
 ## Validity check:
-## OQ scores have to be between -16 and 240.
+## OQ total scores have to be between -16 and 240.
+## Subscales:
+##  -4 <= int_dis <= 68
+##  0 <= som <- 32
+##  -6 <= int_rel <= 34
+##  -2 <= soc_prob <= 30
+##  -4 <= beh_dys <= 40
+##  0 <= crit_it <= 36
+## Programs must be either RTC or WT
+## (For example, exclude IOP and TBS.)
 
 natsap_sub <- natsap_sub %>%
-    filter(OQ_A >= -16 & OQ_A <= 240 & OQ_D >= -16 & OQ_D <= 240)
-
+    filter(OQ_A >= -16 & OQ_A <= 240) %>%
+    filter(OQ_A_int_dis >= -4 & OQ_A_int_dis <= 68) %>%
+    filter(OQ_A_som >= 0 & OQ_A_som <= 32) %>%
+    filter(OQ_A_int_rel >= -6 & OQ_A_int_rel <= 34) %>%
+    filter(OQ_A_soc_prob >= -2 & OQ_A_soc_prob <= 30) %>%
+    filter(OQ_A_beh_dys >= -4 & OQ_A_beh_dys <= 40) %>%
+    filter(OQ_A_crit_it >= 0 & OQ_A_crit_it <= 36) %>%
+    filter(OQ_D >= -16 & OQ_D <= 240) %>%
+    filter(OQ_D_int_dis >= -4 & OQ_D_int_dis <= 68) %>%
+    filter(OQ_D_som >= 0 & OQ_D_som <= 32) %>%
+    filter(OQ_D_int_rel >= -6 & OQ_D_int_rel <= 34) %>%
+    filter(OQ_D_soc_prob >= -2 & OQ_D_soc_prob <= 30) %>%
+    filter(OQ_D_beh_dys >= -4 & OQ_D_beh_dys <= 40) %>%
+    filter(OQ_D_crit_it >= 0 & OQ_D_crit_it <= 36)
+    
+dose_sub <- dose_sub %>%
+    filter(RTCWT != "RTC" | RTCWT != "WT")
+    
 
 ## Join IDs so our tidy data sets will contain only
 ## programs for which we have dose data and matched pairs.
@@ -124,16 +166,41 @@ check_sex <- dose_tidy %>%
            correct_sex = ifelse((coed == "male only" & n_female > 0), "MALE", "FEMALE")) %>%
     filter(check == FALSE)
 
-for (i in check_sex$ID) {
+for (i in check_sex$ID) {  # Rewrite sex for data-entry errors.
     correct_sex <- check_sex$correct_sex[check_sex$ID == i]
-    #### LEFT OFF HERE ####
+    natsap_tidy[natsap_tidy$ID == i & natsap_tidy$sex != correct_sex, "sex"] <- correct_sex
 }
+
+## Redo the sample size calculations and the joins so that the sample sizes by
+## sex are correct again.
+## (MAYBE THERE'S A BETTER WAY TO DO THIS!)
+
+sample_size <- natsap_tidy %>%
+    group_by(ID, sex) %>%
+    summarize(n = n()) %>%
+    spread(sex, n) %>%
+    rename(n_female = FEMALE, n_male = MALE) %>%
+    replace(is.na(.), 0) %>%
+    mutate(n = n_female + n_male)
+           
+dose_tidy <- dose_tidy %>%
+    select(-n, -n_female, -n_male) %>%
+    inner_join(sample_size, by = "ID")
+
+natsap_tidy <- natsap_tidy %>%
+    semi_join(dose_tidy, by = "ID")
 
 ## Make OQdiff variable
 
 natsap_tidy <- natsap_tidy %>%
-    mutate(OQdiff = OQ_A - OQ_D) # Positive scores represent improvement
-
+    mutate(OQdiff = OQ_A - OQ_D,   # Positive scores represent improvement
+           OQdiff_int_dis = OQ_A_int_dis - OQ_D_int_dis,
+           OQdiff_som = OQ_A_som - OQ_D_som,
+           OQdiff_int_rel = OQ_A_int_rel - OQ_D_int_rel,
+           OQdiff_soc_prob = OQ_A_soc_prob - OQ_D_soc_prob,
+           OQdiff_beh_dys = OQ_A_beh_dys - OQ_D_beh_dys,
+           OQdiff_crit_it = OQ_A_crit_it - OQ_D_crit_it)
+    
 
 ## Give programs new random ID, consecutively numbered
 

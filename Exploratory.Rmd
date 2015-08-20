@@ -1,7 +1,7 @@
 ---
 title: "NATSAP- Exploratory Data Analysis"
 author: "Sean Raleigh"
-date: "July 8, 2015"
+date: "August 19, 2015"
 output: html_document
 ---
 
@@ -27,8 +27,8 @@ source("stan_utilities.R")
 ## Import data
 
 ```{r}
-natsap_tidy <- read_csv("./tidydata/natsap_tidy.csv")
-dose_tidy <- read_csv("./tidydata/dose_tidy.csv")
+natsap_tidy <- read.csv("./tidydata/natsap_tidy.csv")
+dose_tidy <- read.csv("./tidydata/dose_tidy.csv")
 ```
 
 ## RTC vs WT
@@ -39,7 +39,7 @@ OQ_explore <- natsap_tidy %>%
 
 OQ_summary <- OQ_explore %>%
     group_by(RTCWT, sex) %>%
-    summarize(median(OQ_A), median(OQ_D), median(OQdiff))
+    summarize(median(OQ_A)*1.0, median(OQ_D)*1.0, median(OQdiff)*1.0)
 OQ_summary
 
 OQ_stats <- OQ_explore %>%

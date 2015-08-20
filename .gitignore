@@ -11,3 +11,5 @@ Reproducing_2014_Stan_files/
 *.png
 *.stan
 *.rds
+Research_questions_explore.R
+database_issues.Rmd
