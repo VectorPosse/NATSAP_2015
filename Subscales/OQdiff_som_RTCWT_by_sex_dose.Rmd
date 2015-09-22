@@ -1,0 +1,192 @@
+---
+title: "NATSAP- OQ diff (somatic) by RTC/WT and sex, plus dose predictors"
+author: "Sean Raleigh"
+date: "August 19, 2015"
+output: html_document
+---
+
+This document contains the analyis of OQ difference from the somatic subscale with RTC/WT and sex (and their interaction) as predictors, along with other group-level dose predictors.
+
+## Housekeeping
+
+Load necessary libraries and special functions.
+
+```{r, message = FALSE}
+library(rstan)
+library(parallel)
+library(beepr)
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(readr)
+library(stringr)
+library(tidyr)
+library(lme4)
+```
+
+```{r}
+source("stan_utilities.R")
+```
+
+## Import data
+
+```{r}
+natsap_tidy <- read_csv("./tidydata/natsap_tidy.csv")
+dose_tidy_z <- read_csv("./tidydata/dose_tidy_z.csv")
+```
+
+
+## Try everything related to dose
+
+Here we model OQdiff using RTCWT and sex along with all other predictors relating to dose.
+
+Gather data to pass to Stan:
+
+```{r}
+# model name is 'OQdiff_som_RTCWT_by_sex_dose'
+
+RTCWT <- dose_tidy_z$RTCWT[natsap_tidy$new_ID]
+RTCWT <- ifelse(RTCWT == "RTC", 0, 1)  # 0 = RTC, 1 = WT
+
+data_OQdiff_som_RTCWT_by_sex_dose <- list(y = natsap_tidy$OQdiff_som,
+                                           n = length(natsap_tidy$OQdiff_som),
+                                           J = NROW(dose_tidy_z),
+                                           prog = natsap_tidy$new_ID,
+                                           RTCWT = RTCWT,
+                                           sex = ifelse(natsap_tidy$sex == "MALE", 0, 1),
+                                           IT = dose_tidy_z$IT,
+                                           GT = dose_tidy_z$GT,
+                                           RFT = dose_tidy_z$RFT,
+                                           IPFT = dose_tidy_z$IPFT,
+                                           PA = dose_tidy_z$PA,
+                                           school = dose_tidy_z$school)
+```
+
+Mathematical model:
+
+$$ \alpha_{j} \sim N\left( \mu_{\alpha} + \gamma_{IT} IT + \dots + \gamma_{school} school, \sigma_{\alpha} \right) $$
+$$ y_{i} \sim ~ N\left( \alpha_{j[i]} + \beta_{female} sex_{i} + 
+        \beta_{WT} RTCWT_{i} +
+        \beta_{WT \cdot female}  (RTCWT_{i} \cdot sex_{i} \right), \sigma_{y}) $$
+
+Write Stan model:
+
+```{r}
+cat("
+    data {
+        int<lower = 1> n;                       // clients
+        vector<lower = -256, upper = 256>[n] y; // OQ diffs
+        vector<lower = 0, upper = 1>[n] RTCWT;  // RTC/WT
+        vector<lower = 0, upper = 1>[n] sex;    // sex
+        int<lower = 1> J;                       // number of programs
+        int prog[n];                            // programs
+        vector[J] IT;                           // Ind. therapy
+        vector[J] GT;                           // Group therapy
+        vector[J] RFT;                          // Remote family therapy
+        vector[J] IPFT;                         // In-person family therapy
+        vector[J] PA;                           // Physical activities
+        vector[J] school;                       // School
+    }
+    parameters {
+        real mu_a;                // program-level mean
+        real<lower = 0> sigma_a;  // program-level sd 
+        vector[J] a;              // intercept for each program
+        real g_IT;                // Coef. of Ind. therapy
+        real g_GT;                // Coef. of Group therapy
+        real g_RFT;               // Coef. of Remote family therapy
+        real g_IPFT;              // Coef. of In-person family therapy
+        real g_PA;                // Coef. of Physical activities
+        real g_school;            // Coef. of School
+        real female;              // coefficient of sex
+        real WT;                  // coefficient of RTCWT
+        real WT_female;           // coefficient of interaction
+        real<lower = 0> sigma_y;  // data-level sd
+    }
+    model {
+        // Implicit uniform priors on everrything
+        a ~ normal(mu_a + g_IT * IT + g_GT * GT +
+                    g_RFT * RFT + g_IPFT * IPFT +
+                    g_PA * PA + g_school * school, sigma_a);
+        for(i in 1:n) {
+            y[i] ~ normal(a[prog[i]] + female * sex[i] + WT * RTCWT[i] + 
+                            WT_female * (RTCWT[i] * sex[i]), sigma_y);
+        }
+    }
+",
+file = "./OQdiff_som_RTCWT_by_sex_dose/OQdiff_som_RTCWT_by_sex_dose.stan")
+```
+
+Fit Stan model:
+
+```{r}
+final_model = FALSE
+
+if (file.exists("./OQdiff_som_RTCWT_by_sex_dose/OQdiff_som_RTCWT_by_sex_dose.rds") & final_model == TRUE) {
+    stan_OQdiff_som_RTCWT_by_sex_dose <-            readRDS("./OQdiff_som_RTCWT_by_sex_dose/OQdiff_som_RTCWT_by_sex_dose.rds")
+} else {
+    stan_OQdiff_som_RTCWT_by_sex_dose <- stan_model("./OQdiff_som_RTCWT_by_sex_dose/OQdiff_som_RTCWT_by_sex_dose.stan")
+    saveRDS(stan_OQdiff_som_RTCWT_by_sex_dose, file = "./OQdiff_som_RTCWT_by_sex_dose/OQdiff_som_RTCWT_by_sex_dose.rds")
+}
+
+fit_OQdiff_som_RTCWT_by_sex_dose <- sampling(stan_OQdiff_som_RTCWT_by_sex_dose, data = data_OQdiff_som_RTCWT_by_sex_dose)
+```
+
+Extract and save samples:
+
+```{r}
+samples_OQdiff_som_RTCWT_by_sex_dose <- as.data.frame(fit_OQdiff_som_RTCWT_by_sex_dose)
+
+write_csv(samples_OQdiff_som_RTCWT_by_sex_dose, path = "./OQdiff_som_RTCWT_by_sex_dose/OQdiff_som_RTCWT_by_sex_dose.csv")
+
+# Get 5 random programs
+set.seed(1234)
+some_programs <- sort(sample(1:data_OQdiff_som_RTCWT_by_sex_dose$J, 5))
+
+# Display sample sizes for selected programs.
+cat("Sample sizes for programs", some_programs, ": ",
+    dose_tidy_z$n[dose_tidy_z$new_ID %in% some_programs])
+
+# Gather up parameter names
+alphas <- some_programs %>%
+    as.character() %>%
+    sapply(function(x) {paste("a[", x, "]", sep = "")}) %>%
+    unname()
+
+
+params_OQdiff_som_RTCWT_by_sex_dose <- c("mu_a", "sigma_a",
+                                          # alphas,
+                                          "female", "WT", "WT_female",
+                                          "g_IT", "g_GT",
+                                          "g_RFT", "g_IPFT",
+                                          "g_PA", "g_school",
+                                          "sigma_y")
+```
+
+Show chain diagnostics and posterior summaries:
+
+```{r, fig.width = 9, fig.height = 10}
+traceplot(fit_OQdiff_som_RTCWT_by_sex_dose, pars = params_OQdiff_som_RTCWT_by_sex_dose, inc_warmup = FALSE)
+
+print(fit_OQdiff_som_RTCWT_by_sex_dose)
+
+len <- length(params_OQdiff_som_RTCWT_by_sex_dose)
+sample_plots(samples_OQdiff_som_RTCWT_by_sex_dose,
+             params = params_OQdiff_som_RTCWT_by_sex_dose,
+             cred_mass = 0.95,
+             layout = matrix(c(1:12),
+                             nrow = 4,
+                             ncol = 3, byrow = TRUE))
+```
+
+Clean up workspace:
+
+```{r, results = 'hide'}
+cleanup("OQdiff_som_RTCWT_by_sex_dose")
+rm(final_model, len, RTCWT, some_programs, alphas)
+gc()
+```
+
+
+```{r}
+beep()
+```

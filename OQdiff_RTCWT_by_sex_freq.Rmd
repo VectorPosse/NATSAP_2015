@@ -1,0 +1,217 @@
+---
+title: "NATSAP- OQ diff by RTC/WT and sex, plus frequency predictors"
+author: "Sean Raleigh"
+date: "August 19, 2015"
+output: html_document
+---
+
+This document contains the analyis of OQ difference with RTC/WT and sex (and their interaction) as predictors, along with other group-level frequency predictors. This will still be a variable-intercept model as a variable-slope model continues to elude me.
+
+## Housekeeping
+
+Load necessary libraries and special functions.
+
+```{r, message = FALSE}
+library(rstan)
+library(parallel)
+library(beepr)
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(readr)
+library(stringr)
+library(tidyr)
+library(lme4)
+```
+
+```{r}
+source("stan_utilities.R")
+```
+
+## Import data
+
+```{r}
+natsap_tidy <- read_csv("./tidydata/natsap_tidy.csv")
+dose_tidy_z <- read_csv("./tidydata/dose_tidy_z.csv")
+```
+
+
+## Try everything related to freq
+
+Here we model OQdiff using RTCWT and sex along with all other predictors relating to frequency.
+
+Gather data to pass to Stan:
+
+```{r}
+# model name is 'OQdiff_RTCWT_by_sex_freq'
+
+RTCWT <- dose_tidy_z$RTCWT[natsap_tidy$new_ID]
+RTCWT <- ifelse(RTCWT == "RTC", 0, 1)  # 0 = RTC, 1 = WT
+
+data_OQdiff_RTCWT_by_sex_freq <- list(y = natsap_tidy$OQdiff,
+                                           n = length(natsap_tidy$OQdiff),
+                                           J = NROW(dose_tidy_z),
+                                           prog = natsap_tidy$new_ID,
+                                           RTCWT = RTCWT,
+                                           sex = ifelse(natsap_tidy$sex == "MALE", 0, 1),
+                                           IT_freq = dose_tidy_z$IT_freq,
+                                           GT_freq = dose_tidy_z$GT_freq,
+                                           RFT_freq = dose_tidy_z$RFT_freq,
+                                           IPFT_freq = dose_tidy_z$IPFT_freq)
+```
+
+Mathematical model:
+
+$$ \alpha_{j} \sim N \left( \mu_{\alpha} + \gamma_{ITfreq} ITfreq + \dots +
+    \gamma_{IPFTfreq} IPFTfreq, \sigma_{\alpha} \right) $$
+$$ y_{i} \sim ~ N\left( \alpha_{j[i]} + \beta_{female} sex_{i} + 
+    \beta_{WT} RTCWT_{i} +
+    \beta_{WT \cdot female}  \left(RTCWT_{i} \cdot sex_{i} \right), \sigma_{y}\right) $$
+
+Write Stan model:
+
+```{r}
+cat("
+    data {
+        int<lower = 1> n;                       // clients
+        vector<lower = -256, upper = 256>[n] y; // OQ diffs
+        vector<lower = 0, upper = 1>[n] RTCWT;  // RTC/WT
+        vector<lower = 0, upper = 1>[n] sex;    // sex
+        int<lower = 1> J;                       // number of programs
+        int prog[n];                            // programs
+        vector[J] IT_freq;                      // Ind. therapy
+        vector[J] GT_freq;                      // Group therapy
+        vector[J] RFT_freq;                     // Remote family therapy
+        vector[J] IPFT_freq;                    // In-person family therapy
+    }
+    parameters {
+        real mu_a;                // program-level mean
+        real<lower = 0> sigma_a;  // program-level sd 
+        vector[J] a;              // intercept for each program
+        real g_IT_freq;           // Coef. of Ind. therapy
+        real g_GT_freq;           // Coef. of Group therapy
+        real g_RFT_freq;          // Coef. of Remote family therapy
+        real g_IPFT_freq;         // Coef. of In-person family therapy
+        real female;              // coefficient of sex
+        real WT;                  // coefficient of RTCWT
+        real WT_female;           // coefficient of interaction
+        real<lower = 0> sigma_y;  // data-level sd
+    }
+    model {
+        // Implicit uniform priors on everrything
+        a ~ normal(mu_a + g_IT_freq * IT_freq + g_GT_freq * GT_freq +
+                    g_RFT_freq * RFT_freq + g_IPFT_freq * IPFT_freq, sigma_a);
+        for(i in 1:n) {
+            y[i] ~ normal(a[prog[i]] + female * sex[i] + WT * RTCWT[i] + 
+                            WT_female * (RTCWT[i] * sex[i]), sigma_y);
+        }
+    }
+",
+file = "./OQdiff_RTCWT_by_sex_freq/OQdiff_RTCWT_by_sex_freq.stan")
+```
+
+Fit Stan model:
+
+```{r}
+final_model = TRUE
+
+if (file.exists("./OQdiff_RTCWT_by_sex_freq/OQdiff_RTCWT_by_sex_freq.rds") & final_model == TRUE) {
+    stan_OQdiff_RTCWT_by_sex_freq <-            readRDS("./OQdiff_RTCWT_by_sex_freq/OQdiff_RTCWT_by_sex_freq.rds")
+} else {
+    stan_OQdiff_RTCWT_by_sex_freq <- stan_model("./OQdiff_RTCWT_by_sex_freq/OQdiff_RTCWT_by_sex_freq.stan")
+    saveRDS(stan_OQdiff_RTCWT_by_sex_freq, file = "./OQdiff_RTCWT_by_sex_freq/OQdiff_RTCWT_by_sex_freq.rds")
+}
+
+fit_OQdiff_RTCWT_by_sex_freq <- sampling(stan_OQdiff_RTCWT_by_sex_freq, data = data_OQdiff_RTCWT_by_sex_freq)
+```
+
+Extract and save samples:
+
+```{r}
+samples_OQdiff_RTCWT_by_sex_freq <- as.data.frame(fit_OQdiff_RTCWT_by_sex_freq)
+
+write_csv(samples_OQdiff_RTCWT_by_sex_freq, path = "./OQdiff_RTCWT_by_sex_freq/OQdiff_RTCWT_by_sex_freq.csv")
+
+# Get 5 random programs
+set.seed(1234)
+some_programs <- sort(sample(1:data_OQdiff_RTCWT_by_sex_freq$J, 5))
+
+# Display sample sizes for selected programs.
+cat("Sample sizes for programs", some_programs, ": ",
+    dose_tidy_z$n[dose_tidy_z$new_ID %in% some_programs])
+
+# Gather up parameter names
+alphas <- some_programs %>%
+    as.character() %>%
+    sapply(function(x) {paste("a[", x, "]", sep = "")}) %>%
+    unname()
+
+
+params_OQdiff_RTCWT_by_sex_freq <- c("mu_a", "sigma_a",
+                                          # alphas,
+                                          "female", "WT", "WT_female",
+                                          "g_IT_freq", "g_GT_freq",
+                                          "g_RFT_freq", "g_IPFT_freq",
+                                          "sigma_y")
+```
+
+Show chain diagnostics and posterior summaries:
+
+```{r, fig.width = 9, fig.height = 10}
+traceplot(fit_OQdiff_RTCWT_by_sex_freq, pars = params_OQdiff_RTCWT_by_sex_freq, inc_warmup = FALSE)
+
+print(fit_OQdiff_RTCWT_by_sex_freq)
+
+len <- length(params_OQdiff_RTCWT_by_sex_freq)
+sample_plots(samples_OQdiff_RTCWT_by_sex_freq,
+             params = params_OQdiff_RTCWT_by_sex_freq,
+             cred_mass = 0.95,
+             layout = matrix(c(1:12),
+                             nrow = 5,
+                             ncol = 2, byrow = TRUE))
+```
+
+Clean up workspace:
+
+```{r, results = 'hide'}
+cleanup("OQdiff_RTCWT_by_sex_freq")
+rm(final_model, len, RTCWT, some_programs, alphas)
+gc()
+```
+
+## Investigate RTF_freq
+
+The frequency of remote family therapy seems quite significant, so here we investigate. First, add a column to `dose_tidy_z` to get the median OQdiff for each program.
+
+```{r}
+OQdiff_prog <- natsap_tidy %>%
+    group_by(ID) %>%
+    summarize(median_OQdiff = median(OQdiff) * 1.0)
+
+RFT_check <- dose_tidy_z %>%
+    inner_join(OQdiff_prog, by = "ID")
+```
+
+Next, we plot `RTF_freq` against the median OQdiff.
+
+```{r}
+ggplot(RFT_check, aes(x = RFT_freq, y = median_OQdiff)) +
+    geom_point()
+```
+
+What about plotting raw OQdiff against RFT freqs?
+
+```{r}
+RFT_check2 <- natsap_tidy %>%
+    inner_join(dose_tidy_z, by = "ID") %>%
+    select(OQdiff, RFT_freq)
+
+ggplot(RFT_check2, aes(x = RFT_freq, y = OQdiff)) +
+    geom_point()
+```
+
+This appears to be a spurious correlation (at least as of the analysis of 26 programs on 08/19/2015).
+
+```{r}
+beep()
+```

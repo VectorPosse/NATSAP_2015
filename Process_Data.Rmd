@@ -219,11 +219,16 @@ natsap_tidy <- natsap_tidy %>%
     inner_join(lookup, by = "ID") %>%
     arrange(new_ID)
 
+## Add scaled variables
+
+dose_tidy_z <- dose_tidy %>%
+    mutate_each(funs(scale), IT:school)
 
 ## Write tidy data sets to csv for convenience
 
 write_csv(dose_tidy, path = "./tidydata/dose_tidy.csv")
 write_csv(natsap_tidy, path = "./tidydata/natsap_tidy.csv")
+write_csv(dose_tidy_z, path = "./tidydata/dose_tidy_z.csv")
 ```
 
 Clean up workspace:

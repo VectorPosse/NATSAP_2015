@@ -1,0 +1,203 @@
+---
+title: "NATSAP- Presentation graphics"
+author: "Sean Raleigh"
+date: "August 26, 2015"
+output: html_document
+---
+
+In this document, we prepare graphics to illustrate the model 
+
+## Housekeeping
+
+Load necessary libraries and special functions.
+
+```{r, message = FALSE}
+library(beepr)
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(readr)
+library(tidyr)
+library(grid)
+```
+
+## Import data
+
+```{r}
+natsap_tidy <- read.csv("./tidydata/natsap_tidy.csv")
+dose_tidy <- read.csv("./tidydata/dose_tidy.csv")
+dose_tidy_z <- read.csv("./tidydata/dose_tidy_z.csv")
+OQdiff_RTCWT_by_sex_dose <- read.csv("./OQdiff_RTCWT_by_sex_dose/OQdiff_RTCWT_by_sex_dose.csv")
+OQdiff_RTCWT_by_sex_freq <- read.csv("./OQdiff_RTCWT_by_sex_freq/OQdiff_RTCWT_by_sex_freq.csv")
+```
+
+## Compile necessary summaries
+
+```{r}
+# multi.sapply function from 
+# http://www.r-bloggers.com/applying-multiple-functions-to-data-frame/
+multi.sapply <- function(...) {
+      arglist <- match.call(expand.dots = FALSE)$...
+      var.names <- sapply(arglist, deparse)
+      has.name <- (names(arglist) != "")
+      var.names[has.name] <- names(arglist)[has.name]
+      arglist <- lapply(arglist, eval.parent, n = 2)
+      x <- arglist[[1]]
+      arglist[[1]] <- NULL
+      result <- sapply(arglist, function (FUN, x) sapply(x, FUN), x)
+      colnames(result) <- var.names[-1]
+      return(result)
+}
+
+# for dose
+
+dose_summary <- OQdiff_RTCWT_by_sex_dose %>%
+    select(-starts_with("a."), -starts_with("lp"), -starts_with("sigma")) %>%
+    multi.sapply(q025 = function(x) {unname(quantile(x, 0.025))},
+                 med = function(x) {median(x)},
+                 q975 = function(x) {unname(quantile(x, 0.975))}) %>%
+    as.data.frame() %>%
+    cbind(vars = rownames(.))
+rownames(dose_summary) <- NULL
+
+## Set up new variable names and order
+graph_order_dose <- data.frame(
+    name = factor(c("Main Effect", "WT", "female", "WT * female",
+             "IT", "GT", "RFT", "IPFT", "PA", "School"),
+             levels = c("Main Effect", "WT", "female", "WT * female",
+             "IT", "GT", "RFT", "IPFT", "PA", "School"),
+             ordered = TRUE),
+    vars = c("mu_a", "WT", "female", "WT_female",
+             "g_IT", "g_GT", "g_RFT", "g_IPFT", "g_PA", "g_school")
+)
+
+dose_summary <- dose_summary %>%
+    inner_join(graph_order_dose, by = "vars") %>%
+    arrange(name)
+
+# for frequency
+
+freq_summary <- OQdiff_RTCWT_by_sex_freq %>%
+    select(-starts_with("a."), -starts_with("lp"), -starts_with("sigma")) %>%
+    multi.sapply(q025 = function(x) {unname(quantile(x, 0.025))},
+                 med = function(x) {median(x)},
+                 q975 = function(x) {unname(quantile(x, 0.975))}) %>%
+    as.data.frame() %>%
+    cbind(vars = rownames(.))
+rownames(freq_summary) <- NULL
+
+## Set up new variable names and order
+graph_order_freq <- data.frame(
+    name = factor(c("Main Effect", "WT", "female", "WT * female",
+             "IT", "GT", "RFT", "IPFT"),
+             levels = c("Main Effect", "WT", "female", "WT * female",
+             "IT", "GT", "RFT", "IPFT"),
+             ordered = TRUE),
+    vars = c("mu_a", "WT", "female", "WT_female",
+             "g_IT_freq", "g_GT_freq", "g_RFT_freq", "g_IPFT_freq")
+)
+
+freq_summary <- freq_summary %>%
+    inner_join(graph_order_freq, by = "vars") %>%
+    arrange(name)
+
+```
+
+## Set up presentation theme
+
+```{r}
+theme_pres <- theme(
+    text = element_text(size = rel(8)),
+    legend.title = element_text(size = rel(6)),
+    legend.key.size = unit(1, "in"),
+    legend.text = element_text(size = rel(4))
+)
+```
+
+## Graph for dose
+
+```{r}
+dose_graph <- ggplot(dose_summary, aes(x = name, y = med, ymin = q025, ymax = q975)) +
+    geom_pointrange(size = rel(2)) +
+    geom_hline(y = 0, color = "blue") +
+    xlab("Dose Variables") +
+    ylab("OQ difference") +
+    theme_pres +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+dose_graph
+```
+
+## Graph for frequency
+
+```{r}
+freq_graph <- ggplot(freq_summary, aes(x = name, y = med, ymin = q025, ymax = q975)) +
+    geom_pointrange(size = rel(2)) +
+    geom_hline(y = 0, color = "blue") +
+    xlab("Frequency Variables") +
+    ylab("OQ difference") +
+    theme_pres +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+freq_graph
+```
+
+
+## Investigate RTF_freq
+
+The frequency of remote family therapy seems quite significant, so here we investigate. First, add a column to `dose_tidy` to get the median OQdiff for each program.
+
+```{r}
+OQdiff_prog <- natsap_tidy %>%
+    group_by(ID) %>%
+    summarize(median_OQdiff = median(OQdiff) * 1.0)
+
+RFT_check <- dose_tidy %>%
+    inner_join(OQdiff_prog, by = "ID")
+```
+
+Next, we plot `RTF_freq` against the median OQdiff.
+
+```{r}
+ggplot(RFT_check, aes(x = RFT_freq, y = median_OQdiff, size = n)) +
+    geom_point() +
+    scale_size_continuous(range = c(5,20)) +
+    xlab("RFT frequency (sessions/week)") +
+    ylab("OQ difference") +
+    theme_pres +
+    theme(legend.position="none")
+```
+
+## RTC vs WT
+
+```{r}
+OQ_explore <- natsap_tidy %>%
+    inner_join(dose_tidy, by = "new_ID")
+
+OQ_summary <- OQ_explore %>%
+    group_by(RTCWT, sex) %>%
+    summarize(`Median OQ_A` = median(OQ_A)*1.0,
+              `Median OQ_D` = median(OQ_D)*1.0,
+              `Median OQdiff` = median(OQdiff)*1.0,
+              n())
+OQ_summary
+
+OQ_stats <- OQ_explore %>%
+    gather(AD, OQ, OQ_A, OQ_D)
+levels(OQ_stats$AD)[levels(OQ_stats$AD) == "OQ_A"] <- "Admission OQ"
+levels(OQ_stats$AD)[levels(OQ_stats$AD) == "OQ_D"] <- "Discharge OQ"
+
+plot_OQ_AD <- ggplot(OQ_stats, aes(x = RTCWT, y = OQ, fill = sex)) +
+    geom_boxplot() +
+    facet_grid(. ~ AD) +
+    xlab("") +
+    scale_fill_discrete(name = "Sex") +
+    theme_pres
+plot_OQ_AD
+
+plot_OQ_diff <- ggplot(OQ_stats, aes(x = RTCWT, y = OQdiff, fill = sex)) +
+    geom_boxplot() +
+    xlab("") +
+    ylab("OQ difference") +
+    scale_fill_discrete(name = "Sex") +
+    theme_pres
+plot_OQ_diff
+```

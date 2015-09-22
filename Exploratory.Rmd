@@ -29,6 +29,7 @@ source("stan_utilities.R")
 ```{r}
 natsap_tidy <- read.csv("./tidydata/natsap_tidy.csv")
 dose_tidy <- read.csv("./tidydata/dose_tidy.csv")
+dose_tidy_z <- read.csv("./tidydata/dose_tidy_z.csv")
 ```
 
 ## RTC vs WT
@@ -39,7 +40,10 @@ OQ_explore <- natsap_tidy %>%
 
 OQ_summary <- OQ_explore %>%
     group_by(RTCWT, sex) %>%
-    summarize(median(OQ_A)*1.0, median(OQ_D)*1.0, median(OQdiff)*1.0)
+    summarize(`Median OQ_A` = median(OQ_A)*1.0,
+              `Median OQ_D` = median(OQ_D)*1.0,
+              `Median OQdiff` = median(OQdiff)*1.0,
+              n())
 OQ_summary
 
 OQ_stats <- OQ_explore %>%

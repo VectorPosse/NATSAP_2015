@@ -32,8 +32,9 @@ source("stan_utilities.R")
 ## Import data
 
 ```{r}
-natsap_tidy <- read_csv("./tidydata/natsap_tidy.csv")
-dose_tidy <- read_csv("./tidydata/dose_tidy.csv")
+natsap_tidy <- read.csv("./tidydata/natsap_tidy.csv")
+dose_tidy <- read.csv("./tidydata/dose_tidy.csv")
+dose_tidy_z <- read.csv("./tidydata/dose_tidy_z.csv")
 ```
 
 

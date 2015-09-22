@@ -1,0 +1,154 @@
+---
+title: "NATSAP- OQ diff"
+author: "Sean Raleigh"
+date: "August 19, 2015"
+output: html_document
+---
+
+This document contains the simplest analysis for OQ differences with no predictors. This is just a test of the same thing in `OQdiff` except with scaled variables.
+
+## Housekeeping
+
+Load necessary libraries and special functions.
+
+```{r, message = FALSE}
+library(rstan)
+library(parallel)
+library(beepr)
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(readr)
+library(stringr)
+library(tidyr)
+library(lme4)
+```
+
+```{r}
+source("stan_utilities.R")
+```
+
+
+## Import data
+
+```{r}
+natsap_tidy <- read.csv("./tidydata/natsap_tidy.csv")
+dose_tidy <- read.csv("./tidydata/dose_tidy.csv")
+dose_tidy_z <- read.csv("./tidydata/dose_tidy_z.csv")
+```
+
+
+## Partial pooling model
+
+This is a varying-intecept hierarchical model. This allows partial pooling and will cause the programs with small sample sizes to shrink to the complete pooling mean.
+
+Gather data to pass to Stan:
+
+```{r}
+# Model name is 'OQdiff_z_prog_hier'
+
+data_OQdiff_z_prog_hier <- list(y = natsap_tidy$OQdiff,
+                            n = length(natsap_tidy$OQdiff),
+                            J = NROW(dose_tidy_z),
+                            prog = natsap_tidy$new_ID)
+```
+
+Mathematical model:
+
+$$ \alpha_{j} \sim N\left(\mu_{\alpha}, \sigma_{\alpha}\right), \quad 1 \leq j \leq J $$
+$$ y_{i} \sim N\left(\alpha_{j[i]}, \sigma_{y}\right), \quad 1 \leq i \leq n $$
+
+Write Stan model:
+
+```{r}
+cat("
+    data {
+        int<lower = 1> n;                       // clients
+        int<lower = 1> J;                       // programs
+        vector<lower = -256, upper = 256>[n] y; // OQ diffs
+        int prog[n];                            // program for each client
+    }
+    parameters {
+        real<lower = -256, upper = 256> mu_a;   // prior mean on alpha (intercepts)
+        real<lower = 0> sigma_a;                // prior sd on alpha (intercepts)
+        vector<lower = -256, upper = 256>[J] a; // program-level intercepts
+        real<lower = 0> sigma_y;                // data-level sd
+    }
+    model {
+        // Implicit uniform priors on mu_a, sigma_a, and sigma_y
+        a ~ normal(mu_a, sigma_a);
+        for (i in 1:n) {
+            y[i] ~ normal(a[prog[i]], sigma_y);
+        }
+    }
+",
+file = "./OQdiff_z/OQdiff_z_prog_hier.stan")
+```
+
+Fit Stan model:
+
+```{r}
+final_model = TRUE
+
+if (file.exists("./OQdiff_z/OQdiff_z_prog_hier.rds") & final_model == TRUE) {
+    stan_OQdiff_z_prog_hier <- readRDS("./OQdiff_z/OQdiff_z_prog_hier.rds")
+} else {
+    stan_OQdiff_z_prog_hier <- stan_model("./OQdiff_z/OQdiff_z_prog_hier.stan")
+    saveRDS(stan_OQdiff_z_prog_hier, file = "./OQdiff_z/OQdiff_z_prog_hier.rds")
+}
+
+fit_OQdiff_z_prog_hier <- sampling(stan_OQdiff_z_prog_hier, data = data_OQdiff_z_prog_hier)
+```
+
+Extract and save samples:
+
+```{r}
+samples_OQdiff_z_prog_hier <- as.data.frame(fit_OQdiff_z_prog_hier)
+
+write_csv(samples_OQdiff_z_prog_hier, path = "./OQdiff_z/OQdiff_z_prog_hier.csv")
+
+# Get 5 random programs
+set.seed(1234)
+some_programs <- sort(sample(1:data_OQdiff_z_prog_hier$J, 5))
+
+# Display sample sizes for selected programs.
+cat("Sample sizes for programs", some_programs, ": ",
+    dose_tidy$n[dose_tidy$new_ID %in% some_programs])
+
+# Gather up parameter names
+alphas <- some_programs %>%
+    as.character() %>%
+    sapply(function(x) {paste("a[", x, "]", sep = "")}) %>%
+    unname()
+
+params_OQdiff_z_prog_hier <- c("mu_a", "sigma_a", alphas, "sigma_y")
+```
+
+Show chain diagnostics and posterior summaries.
+
+```{r, fig.width = 9, fig.height = 10}
+traceplot(fit_OQdiff_z_prog_hier, pars = params_OQdiff_z_prog_hier, inc_warmup = FALSE)
+
+print(fit_OQdiff_z_prog_hier)
+
+len <- length(params_OQdiff_z_prog_hier)
+sample_plots(samples_OQdiff_z_prog_hier,
+             params = params_OQdiff_z_prog_hier,
+             cred_mass = 0.95,
+             layout = matrix(c(1:(len + len %% 2)),
+                             nrow = (len + len %% 2)/2,
+                             ncol = 2, byrow = TRUE))
+```
+
+Clean up workspace.
+
+```{r, results = 'hide'}
+cleanup("OQdiff_z_prog_hier")
+rm(final_model, len, some_programs, alphas)
+gc()
+```
+
+
+```{r}
+beep()
+```

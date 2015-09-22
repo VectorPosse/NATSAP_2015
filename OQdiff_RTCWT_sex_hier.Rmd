@@ -7,6 +7,8 @@ output: html_document
 
 This document continues the analyis of OQ difference with RTC/WT and sex as a predictor, but not with everything properly set up for programs that are coed vs male only vs female only.
 
+PROBLEMS: This model does not seem to work. One can't assign the coefficient b to be zero when a problem is single-sex. The effort below causes things to blow up.
+
 ## Housekeeping
 
 Load necessary libraries and special functions.
